@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog
 
 from .. import __version__, data, model, netlist
 from ..cli_netlist import write_outputs
-from ..plots import compare
+from ..plots import VIEWS, compare, views_for
 from ..schematic import draw_row
 from .worker import ExtractWorker
 
@@ -59,6 +59,13 @@ class MainWindow(QMainWindow):
         self.target.setValue(defaults.target_db)
         self.target.setToolTip('Error limit per branch: RMS difference of the S-parameters '
                                'that the branch model may cause')
+        self.branch_percent = QDoubleSpinBox(decimals=0, minimum=0, maximum=100, suffix=' %')
+        self.branch_percent.setValue(defaults.branch_percent)
+        self.branch_percent.setSpecialValueText('off')
+        self.branch_percent.setToolTip(
+            'Error limit of the branch itself: RMS of |Y model - Y data| / |Y data|. Keeps '
+            'R and Q right for parts that are nearly a through or an open in the '
+            'reference impedance. Off: S-parameters only.')
         self.max_elements = QSpinBox(minimum=1, maximum=5)
         self.max_elements.setValue(defaults.max_elements)
         self.form = QComboBox()
@@ -80,9 +87,10 @@ class MainWindow(QMainWindow):
         form1.addRow('to', self.fmax)
         form2.addRow('Element values', self.require)
         form2.addRow('Choice', self.pick)
-        form3.addRow('Error limit', self.target)
+        form3.addRow('Error limit, S-parameters', self.target)
         form3.addRow('Elements per branch, up to', self.max_elements)
         form4 = QFormLayout()
+        form4.addRow('Error limit, branch', self.branch_percent)
         form4.addRow('Form', self.form)
         form4.addRow('', self.coupling)
         row_opt = QHBoxLayout()
@@ -113,8 +121,9 @@ class MainWindow(QMainWindow):
         row_run.addWidget(self.save_button)
 
         # --- results ---
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(['Branch', 'Network', 'Error', 'Element values'])
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(['Branch', 'Network', 'S error', 'Branch error',
+                                              'Element values'])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -137,9 +146,27 @@ class MainWindow(QMainWindow):
         left.setSizes([190, 230, 200])
         self.figure = Figure(figsize=(6, 5))
         self.canvas = FigureCanvasQTAgg(self.figure)
+        self.view = QComboBox()
+        self.view.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.view.setToolTip('S-parameters; the error of each S-parameter against frequency; '
+                             'or series L (or C), series R and Q of a 2-port')
+        self.view.currentIndexChanged.connect(lambda *_: self._show_plot())
+        self.all_data = QCheckBox('All data')
+        self.all_data.setToolTip('Show all frequencies of the data, not only the fit band')
+        self.all_data.toggled.connect(lambda *_: self._show_plot())
+        row_plot = QHBoxLayout()
+        row_plot.addWidget(QLabel('Plot:'))
+        row_plot.addWidget(self.view)
+        row_plot.addWidget(self.all_data)
+        row_plot.addStretch(1)
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.addLayout(row_plot)
+        right_layout.addWidget(self.canvas, 1)
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(left)
-        split.addWidget(self.canvas)
+        split.addWidget(right)
         split.setSizes([620, 630])
 
         layout = QVBoxLayout()
@@ -191,7 +218,8 @@ class MainWindow(QMainWindow):
         return model.Options(
             fmin=self.fmin.value() * 1e9 or None, fmax=self.fmax.value() * 1e9 or None,
             require=self.require.currentData(), pick=self.pick.currentData(),
-            target_db=self.target.value(), max_elements=self.max_elements.value(),
+            target_db=self.target.value(), branch_percent=self.branch_percent.value(),
+            max_elements=self.max_elements.value(),
             form=self.form.currentData(), coupling=self.coupling.isChecked())
 
     def run(self):
@@ -251,18 +279,19 @@ class MainWindow(QMainWindow):
             if isinstance(r, model.Branch):
                 combo = QComboBox()
                 for c in r.candidates[:MAX_ALTERNATIVES]:
-                    mark = '' if c.error <= r.limit else '  (above limit)'
-                    combo.addItem(f'{c.label}, {c.n_elements} el., {c.error_db:.1f} dB{mark}')
+                    mark = '' if c.score <= r.limit else '  (above limit)'
+                    combo.addItem(f'{c.label}, {c.n_elements} el., {c.error_db:.1f} dB, '
+                                  f'{c.relative_text()}{mark}')
                 combo.setToolTip('Other networks that were tried for this branch')
                 combo.currentIndexChanged.connect(
                     lambda index, b=m.branches.index(r): self._choose(b, index))
                 self.table.setCellWidget(row, 1, combo)
             else:
                 self.table.setItem(row, 1, QTableWidgetItem(r.label))
-            self.table.setItem(row, 2, QTableWidgetItem(''))
-            self.table.setItem(row, 3, QTableWidgetItem(''))
+            for col in (2, 3, 4):
+                self.table.setItem(row, col, QTableWidgetItem(''))
         self.table.resizeColumnToContents(0)
-        self.table.setColumnWidth(1, 270)
+        self.table.setColumnWidth(1, 300)
         self.table.setCurrentCell(0, 0)
 
     def _choose(self, row, index):
@@ -275,7 +304,9 @@ class MainWindow(QMainWindow):
         for row, r in enumerate(m.rows()):
             shown = r.chosen if isinstance(r, model.Branch) else r
             self.table.item(row, 2).setText(f'{shown.error_db:.1f} dB')
-            self.table.item(row, 3).setText(shown.values_text())
+            self.table.item(row, 3).setText(
+                shown.relative_text() if isinstance(r, model.Branch) else '-')
+            self.table.item(row, 4).setText(shown.values_text())
         warnings = m.warnings()
         text = (f'Model ({m.form} form): {m.n_elements()} elements, S-parameter error {m.error_db():.1f} dB rms '
                 f'in the fit band {m.freq[0] / 1e9:.6g} to {m.freq[-1] / 1e9:.6g} GHz.')
@@ -284,7 +315,19 @@ class MainWindow(QMainWindow):
         self.status.setText(text)
         self._show_netlist()
         self._show_schematic()
-        compare(m, self.network, self.figure)
+        self._show_plot()
+
+    def _show_plot(self):
+        if self.model is None:
+            return
+        if self.view.count() != len(views_for(self.model)):   # views depend on the port count
+            self.view.blockSignals(True)
+            self.view.clear()
+            for key in views_for(self.model):
+                self.view.addItem(VIEWS[key], key)
+            self.view.blockSignals(False)
+        compare(self.model, self.network, self.figure, self.view.currentData(),
+                self.all_data.isChecked())
         self.canvas.draw_idle()
 
     def schematic_row(self):
@@ -322,7 +365,8 @@ class MainWindow(QMainWindow):
     def save_to(self, folder):
         """Write netlist, model response, JSON and plot into ``folder``."""
         files = write_outputs(self.model, self.network, folder, pathlib.Path(self._loaded).stem,
-                              (self.format.currentData(),), self.subckt_name())
+                              (self.format.currentData(),), self.subckt_name(),
+                              all_data=self.all_data.isChecked())
         self.status.setText('Wrote ' + ', '.join(p.name for p in files) + f' in {folder}')
         return files
 

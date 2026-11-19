@@ -138,6 +138,83 @@ def test_progress_and_cancel():
         model.extract(net, cancel=lambda: len(seen) > 0)
 
 
+# --- the two error measures ------------------------------------------------------------
+
+def low_impedance_inductor():
+    """A small inductor with skin effect: nearly a through in 50 ohm (|S11| < 0.03)."""
+    return make_network(2, {(1, 2): ('X-1', [0.4, 60e-12, 1.0, 15e-12])},
+                        f=np.linspace(0.5e9, 60e9, 80))
+
+
+def test_branch_error_protects_the_resistance():
+    # 0.3 ohm in series with 60 pH, logarithmic frequencies: nearly a through in 50 ohm
+    f = np.geomspace(0.05e9, 20e9, 60)
+    net = make_network(2, {(1, 2): ('SerRL', [0.3, 60e-12])}, f=f)
+    m = model.extract(net, model.Options(form='pi', coupling=False))
+    b = m.branches[2]
+    c = b.chosen
+    assert c.label == 'CR7 SerRL' and c.relative < 1e-6 and c.score <= 1
+    assert np.allclose(c.component.values[0], [0.3, 60e-12], rtol=1e-6)
+    assert '%' in m.summary()
+    # the same branch without its resistance: fine by the S-parameters, wrong for the branch
+    y = net.y.copy()
+    y_l = 1 / (2j * np.pi * f * 60e-12)
+    model._stamp(y, (1, 2), y_l - b.y)
+    s_error = model._rms(model._y2s(y, 50.0) - net.s)
+    relative = np.sqrt(np.mean(np.abs(y_l - b.y) ** 2 / np.abs(b.y) ** 2))
+    assert s_error < 0.01 and relative > 0.5              # passes -40 dB, 50 % off
+    # the score uses the larger of the two, each over its limit
+    opt = m.options
+    assert max(s_error / opt.target, 100 * relative / opt.branch_percent) > 2
+    assert s_error / model.Options(branch_percent=0).target < 1
+    with pytest.raises(ValueError):
+        model.extract(net, model.Options(branch_percent=-1))
+
+
+def test_negligible_branch_stays_open_with_the_branch_limit():
+    # a tiny capacitance to ground: no network is wanted for it, whatever its own error
+    parts = {(1,): ('C', [0.02e-15]), (1, 2): ('SerRL', [2.0, 0.4e-9])}
+    m = model.extract(make_network(2, parts))
+    assert chosen(m)[(1,)].label == 'open' and chosen(m)[(1,)].relative is None
+
+
+# --- plots ------------------------------------------------------------------------------
+
+def test_plot_views():
+    from crcat import plots
+    net = low_impedance_inductor()
+    m = model.extract(net, model.Options(fmax=40e9))
+    assert plots.views_for(m) == ['s', 'error', 'lrq']
+    fig = plots.compare(m, net)                                    # fit band only
+    assert fig.axes[0].get_xlim()[1] < 45 and 'shaded' not in fig.axes[0].get_title()
+    labels = [t.get_text() for t in fig.legends[0].get_texts()]
+    assert labels == ['S11 = S22', 'S21']                          # coinciding traces merged
+    fig = plots.compare(m, net, view='s', all_data=True)
+    assert fig.axes[0].get_xlim()[1] > 55 and 'fit band shaded' in fig.axes[0].get_title()
+    fig = plots.compare(m, net, view='error')
+    assert any('limit -40 dB' == t.get_text() for t in fig.legends[0].get_texts())
+    fig = plots.compare(m, net, view='lrq')
+    assert [ax.get_ylabel() for ax in fig.axes] == ['series L (pH)', 'series R (ohm)', 'Q at port 1']
+    zs, zin = plots.series_quantities(net.s, 50.0)
+    assert np.allclose(zs.imag[0] / (2 * np.pi * net.f[0]), 75e-12, rtol=0.02)
+    # a capacitor shows C, a 3-port has no L/R/Q view, many ports show the worst traces only
+    cap = make_network(2, {(1, 2): ('SerRC', [1.0, 100e-15])})
+    fig = plots.compare(model.extract(cap), cap, view='lrq')
+    assert fig.axes[0].get_ylabel() == 'series C (fF)'
+    three = make_network(3, {(1,): ('C', [10e-15]), (1, 3): ('SerRL', [1.5, 0.3e-9]),
+                             (2, 3): ('SerRL', [1.0, 0.25e-9])})
+    m3 = model.extract(three)
+    assert plots.views_for(m3) == ['s', 'error']
+    with pytest.raises(ValueError):
+        plots.compare(m3, three, view='lrq')
+    plots.MAX_TRACES, keep = 3, plots.MAX_TRACES
+    try:
+        fig = plots.compare(m3, three)
+        assert len(fig.legends[0].get_texts()) == 3 and 'largest error' in fig.axes[0].get_title()
+    finally:
+        plots.MAX_TRACES = keep
+
+
 # --- tee form and coupled coils ---------------------------------------------------------
 
 def make_tee(leg1, leg2, center, f=F, z0=50.0):
@@ -321,7 +398,8 @@ def test_cli(tmp_path, capsys):
     assert 'model (pi form): 5 elements' in out
     files = {p.name for p in (tmp_path / 'out').iterdir()}
     assert files == {'dut_crcat.sp', 'dut_crcat.scs', 'dut_crcat.s2p', 'dut_crcat.json',
-                     'dut_crcat.png', 'dut_crcat_schematic.png'}
+                     'dut_crcat.png', 'dut_crcat_error.png', 'dut_crcat_lrq.png',
+                     'dut_crcat_schematic.png'}
     d = json.loads((tmp_path / 'out' / 'dut_crcat.json').read_text())
     assert d['ports'] == 2 and len(d['branches']) == 3 and d['error_db'] < -100
     back = skrf.Network(str(tmp_path / 'out' / 'dut_crcat.s2p'))

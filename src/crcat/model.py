@@ -12,10 +12,15 @@ a tee by nature; in the pi form its loss can end up in a branch with a negative 
 negative inductance (and resistance) in the branch between them. Such a triangle of
 branches is replaced by two coils with a coupling factor, and a common resistor if needed.
 
-For every branch the candidates are judged by what they do to the S-parameters: the branch
-in the data is replaced by the candidate, and the RMS difference of all S-parameters is the
-candidate's error. The default choice is the network with the fewest elements, all positive,
-whose error is within the limit; "open" (or "short" for a series leg) is a candidate too.
+For every branch the candidates are judged in two ways. (1) What they do to the
+S-parameters: the branch in the data is replaced by the candidate, and the RMS difference
+of all S-parameters is the candidate's error. (2) How well they follow the branch itself:
+the RMS of |Y candidate - Y data| / |Y data|. The second measure is needed for parts that
+are nearly a through or an open in the reference impedance: there, a wrong series
+resistance hardly shows in the S-parameters. A candidate's score is the larger of the two
+errors, each divided by its limit. The default choice is the network with the fewest
+elements, all positive, whose score is within 1; "open" (or "short" for a series leg) is a
+candidate too and is judged by the S-parameters only, so negligible branches drop out.
 
 No printing, no plotting, no GUI here: :func:`extract` returns a :class:`Model`, and takes
 ``progress`` and ``cancel`` callbacks.
@@ -53,8 +58,11 @@ class Options:
         any signs) or 'any' (any real element values).
     pick: 'simplest' (fewest elements within the error limit) or 'best' (lowest error;
         the fewest elements among practically equal errors).
-    target_db: error limit for 'simplest', RMS |S difference| in dB (-40 dB = 0.01).
-    tolerance: if no candidate reaches target_db, the limit is tolerance x the lowest error.
+    target_db: limit of the S-parameter error, RMS |S difference| in dB (-40 dB = 0.01).
+    branch_percent: limit of the branch error, RMS |Y - Y data| / |Y data| in percent;
+        0 switches this measure off (S-parameters only).
+    tolerance: if no candidate reaches both limits, candidates up to tolerance x the best
+        score are accepted.
     max_elements: largest number of elements per branch (1..5).
     form: 'pi', 'tee' (2-ports only) or 'auto': pi, and for a 2-port also the tee form if
         a pi branch misses the error limit; the form with the lower error is kept.
@@ -69,6 +77,7 @@ class Options:
     require: str = 'positive'
     pick: str = 'simplest'
     target_db: float = -40.0
+    branch_percent: float = 20.0
     tolerance: float = 1.25
     max_elements: int = 5
     form: str = 'auto'
@@ -89,6 +98,8 @@ class Options:
             raise ValueError('max_elements must be 1..5')
         if self.target_db >= 0:
             raise ValueError('target_db must be negative')
+        if self.branch_percent < 0:
+            raise ValueError('branch_percent must be >= 0')
 
     @property
     def target(self):
@@ -102,13 +113,20 @@ def _db(x):
 class Candidate:
     """A network with element values for one branch. ``error``: RMS |S difference| when
     this candidate replaces the branch in the data; ``error_y``: RMS error of the branch
-    admittance (S). ``trivial``: 'open' or 'short' for the candidates without elements."""
+    admittance (S). ``relative``: RMS of |Y - Y data| / |Y data| of the branch. ``score``:
+    the larger of the two errors over their limits. ``trivial``: 'open' or 'short' for the
+    candidates without elements."""
 
-    def __init__(self, component, error, error_y, trivial=None):
+    def __init__(self, component, error, error_y, trivial=None, relative=None, score=None):
         self.component = component
         self.error = float(error)
         self.error_y = float(error_y)
         self.trivial = trivial
+        self.relative = relative                 # RMS |dY| / |Y data| (None: not judged)
+        self.score = float(error if score is None else score)   # <= 1: within the limits
+
+    def relative_text(self):
+        return '-' if self.relative is None else f'{100 * self.relative:.3g} %'
 
     @property
     def n_elements(self):
@@ -137,7 +155,7 @@ class Candidate:
         return 'no elements' if self.is_trivial else self.component.format()
 
     def __repr__(self):
-        return f'<{self.label}: {self.error_db:.1f} dB, {self.values_text()}>'
+        return f'<{self.label}: {self.error_db:.1f} dB, {self.relative_text()}, {self.values_text()}>'
 
 
 def _node_name(node):
@@ -158,8 +176,7 @@ class Branch:
         self.trivial = trivial
         self.candidates = []                     # best choice first
         self.chosen = None
-        self.limit = None                        # error limit used for the choice
-        self.target = None                       # target error (RMS |S difference|)
+        self.limit = None                        # largest score accepted for the choice
         self.group = None
 
     @property
@@ -168,8 +185,8 @@ class Branch:
 
     @property
     def target_missed(self):
-        """True if the chosen candidate does not reach the target error."""
-        return self.chosen is not None and self.chosen.error > self.target
+        """True if the chosen candidate does not reach the error limits."""
+        return self.chosen is not None and self.chosen.score > 1 + 1e-9
 
     @property
     def negative_real_part(self):
@@ -409,7 +426,8 @@ class Model:
                 'id': None if b.chosen.is_trivial else b.chosen.component.network.id,
                 'choice': b.chosen.label,
                 'error_rms': b.chosen.error, 'error_db': b.chosen.error_db,
-                'limit_rms': b.limit, 'warning': b.warning(),
+                'error_relative': b.chosen.relative, 'score': b.chosen.score,
+                'score_limit': b.limit, 'warning': b.warning(),
                 'elements': elements(b.elements()),
             } for b in self.free_branches()],
             'couplings': [{
@@ -427,7 +445,8 @@ class Model:
             label = r.chosen.label if isinstance(r, Branch) else r.label
             err = r.chosen.error_db if isinstance(r, Branch) else r.error_db
             text = r.chosen.values_text() if isinstance(r, Branch) else r.values_text()
-            lines.append(f'{r.name:10s} {label:20s} {err:7.1f} dB  {text}')
+            rel = r.chosen.relative_text() if isinstance(r, Branch) else '-'
+            lines.append(f'{r.name:10s} {label:20s} {err:7.1f} dB {rel:>8s}  {text}')
         lines += ['warning: ' + w for w in self.warnings()]
         lines.append(f'model ({self.form} form): {self.n_elements()} elements, S-parameter '
                      f'error {self.error_db():.1f} dB rms, {_db(self.max_error()):.1f} dB max')
@@ -540,15 +559,27 @@ class _BranchSearch:
             r = crfit(branch.y, branch.freq, members[0].flag_a, members[0].flag_b, opt.dps)
             self.fit[sig] = r
             if r.ok:
-                self.sig_error[sig] = self.s_error(evaluate(r.a, r.b, branch.freq, opt.dps))
+                self.sig_error[sig] = self.score(evaluate(r.a, r.b, branch.freq, opt.dps))[0]
             tick()
-        self.trivial = None
+        self.trivial = None                      # judged by the S-parameters only
         if branch.trivial == 'open':
-            self.trivial = Candidate(None, self.s_error(np.zeros_like(branch.y)),
-                                     _rms(branch.y), 'open')
+            e = self.s_error(np.zeros_like(branch.y))
+            self.trivial = Candidate(None, e, _rms(branch.y), 'open', None, e / opt.target)
         elif branch.trivial == 'short':
-            self.trivial = Candidate(None, self.s_error(np.full_like(branch.y, np.inf)),
-                                     math.inf, 'short')
+            e = self.s_error(np.full_like(branch.y, np.inf))
+            self.trivial = Candidate(None, e, math.inf, 'short', None, e / opt.target)
+
+    def score(self, yb):
+        """(score, S error, relative branch error) of admittance yb for this branch."""
+        e = self.s_error(yb)
+        with np.errstate(all='ignore'):
+            rel = float(np.sqrt(np.mean(np.abs(yb - self.b.y) ** 2 / np.abs(self.b.y) ** 2)))
+        if not math.isfinite(rel):
+            rel = math.inf
+        score = e / self.opt.target
+        if self.opt.branch_percent > 0:
+            score = max(score, 100 * rel / self.opt.branch_percent)
+        return score, e, rel
 
     def s_error(self, yb):
         with np.errstate(all='ignore'):
@@ -574,7 +605,8 @@ class _BranchSearch:
                         continue
                     c = Component(net, values=comp.values[sol])
                     if self.accept is None or self.accept(c):
-                        out.append(Candidate(c, self.s_error(c.eval(self.b.freq, 0)), errs[sol]))
+                        score, e, rel = self.score(c.eval(self.b.freq, 0))
+                        out.append(Candidate(c, e, errs[sol], None, rel, score))
             self.done[net.id] = out
         return self.done[net.id]
 
@@ -586,25 +618,25 @@ class _BranchSearch:
             for sig in order:
                 for net in self.sigs[sig]:
                     self.candidates(net)
-        # lowest error: signatures in order of error until one has a candidate
+        # best score: signatures in order of their score until one has a candidate
         best, found_any = self.trivial, False
         for sig in order:
-            if found_any and self.sig_error[sig] >= best.error:
+            if found_any and self.sig_error[sig] >= best.score:
                 break
             found = [c for net in self.sigs[sig] for c in self.candidates(net)]
             if found:
                 found_any = True
-                best = min(found + ([best] if best is not None else []), key=lambda c: c.error)
+                best = min(found + ([best] if best is not None else []), key=lambda c: c.score)
         if best is None:
             return None
         if opt.pick == 'simplest':
-            limit = max(opt.target, opt.tolerance * best.error)
+            limit = max(1.0, opt.tolerance * best.score)
         else:
-            # lowest error; among practically equal errors the fewest elements, so that
-            # exact data do not give a larger network with meaningless extra elements
-            limit = 1.01 * best.error + EQUAL_ERROR
+            # best score; among practically equal ones the fewest elements, so that exact
+            # data do not give a larger network with meaningless extra elements
+            limit = 1.01 * best.score + EQUAL_ERROR / opt.target
         chosen = best
-        if self.trivial is not None and self.trivial.error <= limit:
+        if self.trivial is not None and self.trivial.score <= limit:
             chosen = self.trivial
         else:
             # networks that can reach the limit, fewest elements first
@@ -612,19 +644,18 @@ class _BranchSearch:
                     for n in self.sigs[sig]]
             for count in range(1, best.n_elements + 1):
                 found = [c for n in nets if len(n.symVn) == count
-                         for c in self.candidates(n) if c.error <= limit]
+                         for c in self.candidates(n) if c.score <= limit]
                 if found:
-                    chosen = min(found, key=lambda c: c.error)
+                    chosen = min(found, key=lambda c: c.score)
                     break
         allc = [c for cs in self.done.values() for c in cs]
         if self.trivial is not None:
             allc.append(self.trivial)
-        allc.sort(key=lambda c: (c.error > limit, c.n_elements if c.error <= limit else 0,
-                                 c.error))
+        allc.sort(key=lambda c: (c.score > limit, c.n_elements if c.score <= limit else 0,
+                                 c.score))
         self.b.candidates = [chosen] + [c for c in allc if c is not chosen]
         self.b.chosen = chosen
         self.b.limit = limit
-        self.b.target = opt.target
         return chosen
 
 
@@ -889,8 +920,9 @@ def describe(model):
     lines = [f'data: {model.source or "network"}, {model.nports} port(s), '
              f'fit band {model.freq[0] / 1e9:.6g} to {model.freq[-1] / 1e9:.6g} GHz, '
              f'{model.freq.size} points',
-             f'choice: {o.pick}, elements {o.require}, limit {o.target_db:g} dB or '
-             f'{o.tolerance:g} x lowest error, up to {o.max_elements} elements per branch, '
+             f'choice: {o.pick}, elements {o.require}, limits {o.target_db:g} dB (S-parameters) '
+             f'and {o.branch_percent:g} % (branch), else {o.tolerance:g} x the best, '
+             f'up to {o.max_elements} elements per branch, '
              f'form {o.form}, coupled coils {"on" if o.coupling else "off"}']
     if model.reciprocity_error > 1e-6:
         lines.append(f'data are not reciprocal: RMS |S - S^T|/2 = '

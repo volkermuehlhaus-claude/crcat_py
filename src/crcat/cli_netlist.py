@@ -9,7 +9,7 @@ from . import __version__, data, model, netlist
 from .component import use_ascii_units
 
 
-def write_outputs(m, network, outdir, base, formats, name, plot=True):
+def write_outputs(m, network, outdir, base, formats, name, plot=True, all_data=False):
     """Write netlist(s), model response, JSON, plot and schematic; return the files."""
     outdir = pathlib.Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -27,11 +27,13 @@ def write_outputs(m, network, outdir, base, formats, name, plot=True):
     if plot:
         from matplotlib.backends.backend_agg import FigureCanvasAgg
         from .plots import compare
-        fig = compare(m, network)
-        FigureCanvasAgg(fig)
-        p = outdir / f'{base}_crcat.png'
-        fig.savefig(p, dpi=120)
-        files.append(p)
+        from .plots import views_for
+        for view in views_for(m):
+            fig = compare(m, network, view=view, all_data=all_data)
+            FigureCanvasAgg(fig)
+            p = outdir / (f'{base}_crcat.png' if view == 's' else f'{base}_crcat_{view}.png')
+            fig.savefig(p, dpi=120)
+            files.append(p)
         from .schematic import figure_model
         fig = figure_model(m)
         FigureCanvasAgg(fig)
@@ -58,11 +60,14 @@ def main(argv=None):
                     help='simplest: fewest elements within the error limit (default); '
                          'best: lowest error')
     ap.add_argument('--target-db', type=float, default=d.target_db,
-                    help='error limit per branch, RMS S-parameter difference in dB '
+                    help='S-parameter error limit per branch, RMS S-parameter difference in dB '
                          f'(default {d.target_db:g})')
+    ap.add_argument('--branch-percent', type=float, default=d.branch_percent,
+                    help='error limit of the branch itself, RMS |Y - Y data| / |Y data| in '
+                         f'percent; 0 = S-parameters only (default {d.branch_percent:g})')
     ap.add_argument('--tolerance', type=float, default=d.tolerance,
-                    help='if the limit cannot be reached: accept up to this factor times '
-                         f'the lowest error (default {d.tolerance:g})')
+                    help='if the limits cannot be reached: accept up to this factor times '
+                         f'the best candidate (default {d.tolerance:g})')
     ap.add_argument('--max-elements', type=int, default=d.max_elements,
                     help=f'most elements per branch, 1..5 (default {d.max_elements})')
     ap.add_argument('--form', choices=model.FORM, default=d.form,
@@ -77,7 +82,9 @@ def main(argv=None):
                     help='output folder (default: the folder of the input file)')
     ap.add_argument('--full-search', action='store_true',
                     help='synthesize every catalog network (slower, same result)')
-    ap.add_argument('--noplot', action='store_true', help='do not write the comparison plot')
+    ap.add_argument('--noplot', action='store_true', help='do not write the plots')
+    ap.add_argument('--plot-all-data', action='store_true',
+                    help='plots over all frequencies of the data, not only the fit band')
     ap.add_argument('--version', action='version', version=f'crcat {__version__}')
     args = ap.parse_args(argv)
     try:
@@ -93,6 +100,7 @@ def main(argv=None):
             fmin=None if args.fmin is None else args.fmin * 1e9,
             fmax=None if args.fmax is None else args.fmax * 1e9,
             require=args.require, pick=args.pick, target_db=args.target_db,
+            branch_percent=args.branch_percent,
             tolerance=args.tolerance, max_elements=args.max_elements,
             form=args.form, coupling=not args.no_coupling, full_search=args.full_search)
         m = model.extract(network, opt)
@@ -103,7 +111,7 @@ def main(argv=None):
     formats = netlist.FORMATS if args.format == 'both' else (args.format,)
     name = args.name or netlist.subckt_name(path.stem + '_model')
     files = write_outputs(m, network, args.outdir or path.parent, path.stem, formats, name,
-                          plot=not args.noplot)
+                          plot=not args.noplot, all_data=args.plot_all_data)
     for p in files:
         print(f'wrote {p}')
 

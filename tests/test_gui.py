@@ -58,11 +58,24 @@ def test_gui_extract_and_save(app, tmp_path):
     assert shown() != 'p1 - p2: CR7 SerRL'                 # the schematic follows too
     combo.setCurrentIndex(0)
     assert win.netlist_view.toPlainText() == before and shown() == 'p1 - p2: CR7 SerRL'
+    # plot views: S-parameters, error, and L/R/Q for a 2-port; all data on request
+    assert [win.view.itemData(k) for k in range(win.view.count())] == ['s', 'error', 'lrq']
+    assert [ax.get_ylabel() for ax in win.figure.axes] == ['magnitude (dB)', 'phase (deg)']
+    win.view.setCurrentIndex(win.view.findData('lrq'))
+    assert [ax.get_ylabel() for ax in win.figure.axes] == ['series L (pH)', 'series R (ohm)',
+                                                           'Q at port 1']
+    win.view.setCurrentIndex(win.view.findData('error'))
+    assert win.figure.axes[0].get_ylabel() == '|S model - S data| (dB)'
+    assert 'shaded' not in win.figure.axes[0].get_title()
+    win.all_data.setChecked(True)
+    assert 'fit band shaded' in win.figure.axes[0].get_title()
+    assert win.table.columnCount() == 5 and win.table.item(2, 3).text().endswith('%')
     win.format.setCurrentIndex(win.format.findData('spectre'))
     assert 'subckt dut_model (p1 p2)' in win.netlist_view.toPlainText()
     files = win.save_to(tmp_path / 'out')
-    assert {p.name for p in files} == {'dut_crcat.scs', 'dut_crcat.s2p', 'dut_crcat.json',
-                                       'dut_crcat.png', 'dut_crcat_schematic.png'}
+    assert {p.name for p in files} == {
+        'dut_crcat.scs', 'dut_crcat.s2p', 'dut_crcat.json', 'dut_crcat.png',
+        'dut_crcat_error.png', 'dut_crcat_lrq.png', 'dut_crcat_schematic.png'}
     win.close()
 
 

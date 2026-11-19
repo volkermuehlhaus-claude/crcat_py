@@ -43,45 +43,75 @@ between each pair of ports (for a 2-port, the pi network). Each branch is a one-
 catalog can model it with up to five R, L, C, and the netlist is these networks wired
 together.
 
-For each branch, a candidate network is judged by what it does to the S-parameters: it
-replaces the branch in the data, and the RMS difference of all S-parameters is its error.
-The default choice is the network with the fewest elements, all positive, whose error is
-within the limit (`--target-db`, default -40 dB). "Open" counts as a candidate, so weak
-branches disappear. A model in two other forms is tried when this pi form fails, see
+For each branch, a candidate network is judged in two ways:
+
+- **S-parameter error.** The candidate replaces the branch in the data, and the RMS
+  difference of all S-parameters is its error (limit `--target-db`, default -40 dB).
+- **Branch error.** The RMS of |Y candidate - Y data| / |Y data| of the branch itself
+  (limit `--branch-percent`, default 20 %). A part that is nearly a through or an open in
+  50 ohm hides its own errors from the S-parameters: for a 74 pH inductor, a model without
+  any series resistance at low frequency passed the -40 dB limit.
+
+The default choice is the network with the fewest elements, all positive, that is within
+both limits. "Open" counts as a candidate and is judged by the S-parameters only, so weak
+branches disappear. If nothing is within the limits, candidates up to 1.25 times the best
+one are accepted and a warning is printed.
+
+The branch error catches a resistance that is wrong where it matters to the branch (low Q).
+Where Q is high, the resistance is a small part of the admittance, so R and Q can still be
+off there; the L, R, Q plot shows it.
+
+The tool starts with the pi form and tries two other forms when that fails, see
 [Tee form](#tee-form) and [Coupled coils](#coupled-coils).
 
 Example, a 170 fF MIM capacitor from a Palace simulation (1-300 GHz data, fitted to
-100 GHz):
+100 GHz). In the pi form the port-2 branch of the data has a negative real part, so the tee
+form is taken:
 
 ```
-p1 - gnd   CR3 C          -41.4 dB  C=9.006fF
-p2 - gnd   CR3 C          -41.6 dB  C=0.6499fF
-p1 - p2    CR11 SerRLC    -56.0 dB  R=1.177Ohm L=6.605pH C=172.3fF
-model (pi form): 5 elements, S-parameter error -49.5 dB rms, -42.8 dB max
+p1 - c     CR11 SerRLC    -64.0 dB   1.58 %  R=573.5mOhm L=3.336pH C=926fF
+p2 - c     CR9 SerLC      -43.7 dB   5.61 %  L=3.588pH C=207.8fF
+c - gnd    CR3 C          -78.6 dB  0.207 %  C=9.681fF
+model (tee form): 6 elements, S-parameter error -44.4 dB rms, -40.9 dB max
 ```
 
 ```
 .SUBCKT mim_170fF_model p1 p2
-C_p1 p1 0 9.00639e-15
-C_p2 p2 0 6.49939e-16
-R_p1p2 p1 p1p2_n2 1.17698
-L_p1p2 p1p2_n2 p1p2_n3 6.60537e-12
-C_p1p2 p1p2_n3 p2 1.7233e-13
+R_p1c p1 p1c_n2 0.573454
+L_p1c p1c_n2 p1c_n3 3.33601e-12
+C_p1c p1c_n3 c 9.26017e-13
+L_p2c p2 p2c_n2 3.58771e-12
+C_p2c p2c_n2 c 2.07794e-13
+C_c c 0 9.68122e-15
 .ENDS mim_170fF_model
 ```
 
 Written next to the input file: the netlist (`_crcat.sp`; with `--format spectre` or `both`
-also `_crcat.scs`), the S-parameters of the model (`_crcat.sNp`), the result as JSON, a
-plot of data against model and the schematics of all branches (`_crcat_schematic.png`).
+also `_crcat.scs`), the S-parameters of the model (`_crcat.sNp`), the result as JSON, the
+plots (see below) and the schematics of all branches (`_crcat_schematic.png`).
 
 ![crcat-gui](doc/gui.png)
 
 In the window, the Network column lists the other networks tried for each branch; choosing
-one updates netlist, error, schematic and plot at once. The panel under the table shows
+one updates netlist, errors, schematic and plot at once. The panel under the table shows
 the schematic of the selected row with its element values; coupled coils are drawn as a
 pair with their coupling factor:
 
 ![coupled coils in crcat-gui](doc/gui_coupled.png)
+
+### Plots
+
+| View | Shows | File |
+|---|---|---|
+| S-parameters | magnitude and phase, data (wide) and model (thin) | `_crcat.png` |
+| Error | \|S model - S data\| of each S-parameter against frequency, with the limit | `_crcat_error.png` |
+| L (or C), R, Q | 2-ports: series L or C and series R from -1/Y21, Q from 1/Y11 | `_crcat_lrq.png` |
+
+The plots show the fit band; "All data" in the window (`--plot-all-data`) shows every
+frequency of the data with the fit band shaded. S-parameters that coincide are drawn once
+("S11 = S22"). With more than 8 different S-parameters, the 8 with the largest error are
+drawn. The Error view does not depend on the axis scale or on how small an S-parameter is;
+the L, R, Q view shows what an inductor or capacitor is judged by.
 
 ### Tee form
 
@@ -95,9 +125,9 @@ Example: the same MIM capacitor over the full 1-300 GHz. In the pi form the port
 the data has a negative real part in 96 % of the band (model error -19.3 dB). The tee form:
 
 ```
-p1 - c     CR11 SerRLC    -59.9 dB  R=625.8mOhm L=3.286pH C=938.3fF
-p2 - c     CR11 SerRLC    -52.6 dB  R=769.9mOhm L=2.994pH C=216.9fF
-c - gnd    CR3 C          -57.5 dB  C=9.554fF
+p1 - c     CR11 SerRLC    -59.9 dB   3.37 %  R=625.8mOhm L=3.286pH C=938.3fF
+p2 - c     CR11 SerRLC    -52.6 dB   2.76 %  R=769.9mOhm L=2.994pH C=216.9fF
+c - gnd    CR3 C          -57.5 dB  0.972 %  C=9.554fF
 model (tee form): 7 elements, S-parameter error -49.2 dB rms, -40.0 dB max
 ```
 
@@ -114,10 +144,10 @@ Example: a center-tapped inductor (3-port, center tap at port 3), fitted to 30 G
 of positive elements over its full band the error was -12.5 dB. With coupled coils:
 
 ```
-p1 - gnd   CR3 C          -65.9 dB  C=6.015fF
-p2 - gnd   CR3 C          -65.2 dB  C=6.354fF
-p3 - gnd   open           -40.7 dB  no elements
-p1 - p2    open           -42.2 dB  no elements
+p1 - gnd   CR3 C          -65.9 dB   12.2 %  C=6.015fF
+p2 - gnd   CR3 C          -65.2 dB   12.6 %  C=6.354fF
+p3 - gnd   open           -40.7 dB        -  no elements
+p1 - p2    open           -42.2 dB        -  no elements
 p1, p2 - p3 coupled coils: CR7 SerRL + CR7 SerRL   -42.2 dB
            R=842.6mOhm L=165.4pH | R=1.111Ohm L=167pH | k=-0.3873
 model (pi form): 7 elements, S-parameter error -38.2 dB rms, -29.9 dB max
@@ -133,7 +163,7 @@ K_k12 L_k12a L_k12b -0.387331
 
 The coupling factor is one number for the whole band. Towards the resonance the apparent
 mutual inductance of this inductor grows (from -59 pH to -109 pH at 60 GHz), so over the full
-0.01-60 GHz the same model reaches -29.7 dB only.
+0.01-60 GHz the same model reaches -30.7 dB only.
 
 Each coil must have an inductor that carries the whole coil current, so coils with a
 capacitor across their terminals (a transformer whose only other branches go to ground) are
@@ -151,7 +181,8 @@ Main options (`crcat-netlist --help` lists all):
 | `--require passive`, `any` | any signs if the branch stays passive; no restriction |
 | `--pick simplest` | fewest elements within the error limit (default) |
 | `--pick best` | lowest error |
-| `--target-db` | error limit per branch, RMS S-parameter difference |
+| `--target-db` | S-parameter error limit per branch (default -40 dB) |
+| `--branch-percent` | branch error limit (default 20 %); 0 = S-parameters only |
 | `--max-elements` | most elements per branch (1..5) |
 | `--form auto`, `pi`, `tee` | auto (default): pi, and the tee form for a 2-port if a pi branch misses the limit |
 | `--no-coupling` | never use coupled coils |
