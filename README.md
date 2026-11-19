@@ -43,7 +43,12 @@ Best passive models:
 ```
 
 The data are a Sonnet netlist simulation of network XXXII-39 (CR500), so the search finds
-it and its equivalent networks with the exact element values. `--fit` selects the data:
+it and its equivalent networks with the exact element values. "Passive" means Re Y >= 0 at
+all frequencies, which still allows negative elements; the report therefore also lists the
+best models whose element values are all real and positive. For the series branch of a
+170 fF MIM capacitor simulated with Palace (1-300 GHz, `--fit y21`), for example, that list
+starts with 5-element models (C plus a frequency-dependent loss) and contains the plain
+series RLC (CR11: R 1.36 ohm, L 6.16 pH, C 180.7 fF). `--fit` selects the data:
 `y11` (pi-model admittance port 1 to ground, default), `y21` (pi-model admittance between
 ports 1 and 2), `z11` / `z21` (tee model), `Y11`, `Z11`, `S11` (the parameter itself). A
 leading number fits only the first frequencies, e.g. `--fit 200y11`. `crcat-seed --help`
@@ -114,6 +119,7 @@ prompts of `CRSeed`. Networks can therefore not be added to the custom catalog i
 - **The default catalog** is base + custom without the transforms between base and custom
   networks (CRCat recomputes those).
 - The 35 base networks whose synthesis equations are all zero are treated as having none.
+- Added: the filter for models with positive real element values (`best(physical=True)`).
 
 ## The catalog
 

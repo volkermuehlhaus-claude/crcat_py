@@ -36,7 +36,11 @@ def test_seed_subset():
     assert {e.id for e in r.entries[:3]} == {500, 239, 413}
     check_readme(r.entries)
     assert r.best(1, passive=True)[0].id in (500, 239, 413)
-    assert 'Pi admit port 1 to gnd' in r.report()
+    assert r.best(1, physical=True)[0].id in (500, 239, 413)
+    assert all(e.physical == all(isinstance(v, float) and v > 0 for v in e.component.values[0])
+               for e in r.entries)
+    report = r.report()
+    assert 'Pi admit port 1 to gnd' in report and 'positive element values' in report
 
 
 @pytest.mark.slow

@@ -191,6 +191,10 @@ class Component:
     def is_passive(self, solution=0):
         return not self.gain_frequencies(solution)
 
+    def is_physical(self, solution=0):
+        """True if all element values are real and positive (realizable R, L, C)."""
+        return all(isinstance(v, float) and v > 0 for v in self.values[solution])
+
     # --- output ---------------------------------------------------------------------
 
     def format(self, solution=0, digits=4):

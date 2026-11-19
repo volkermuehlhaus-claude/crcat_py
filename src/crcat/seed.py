@@ -23,13 +23,15 @@ __all__ = ['seed', 'SeedResult', 'SeedEntry']
 
 class SeedEntry:
     """One fitted network: ``component`` (solutions sorted by error), ``errors`` (RMS error
-    of each solution), ``error`` (best), ``passive`` (of the best solution)."""
+    of each solution), ``error`` (best), ``passive`` (Re Y >= 0 at all frequencies) and
+    ``physical`` (all element values real and positive), both of the best solution."""
 
     def __init__(self, component, errors, passive):
         self.component = component
         self.errors = errors
         self.error = float(errors[0])
         self.passive = passive
+        self.physical = component.is_physical(0)
 
     @property
     def id(self):
@@ -53,8 +55,11 @@ class SeedResult:
         self.freq, self.y, self.nfit = freq, y, nfit
         self.description, self.source = description, source
 
-    def best(self, n=10, passive=False):
-        e = [x for x in self.entries if x.passive] if passive else self.entries
+    def best(self, n=10, passive=False, physical=False):
+        """The n best entries; only passive ones, or only ones with positive real
+        element values (``physical``), if asked."""
+        e = [x for x in self.entries
+             if (x.passive or not passive) and (x.physical or not physical)]
         return e[:n]
 
     def report(self, n=100, n_passive=20):
@@ -73,14 +78,19 @@ class SeedResult:
         lines.append('Best passive models:')
         for e in self.best(10, passive=True):
             lines.append(f'  CR{e.id} {e.name}, rms {e.error:.3g}: {e.component.format()}')
+        lines.append('Best models with positive element values:')
+        for e in self.best(10, physical=True):
+            lines.append(f'  CR{e.id} {e.name}, rms {e.error:.3g}: {e.component.format()}')
         return '\n'.join(lines)
 
     def plot(self, ids=None, path=None, z0=50.0):
         """Plot data and fitted models: reflection coefficient of the admittance (dB, against
-        z0) and phase of the admittance. ``ids``: Ids to plot (default: best passive)."""
+        z0) and phase of the admittance. ``ids``: Ids to plot (default: the best model with
+        positive element values and the best passive one)."""
         import matplotlib.pyplot as plt
         if ids is None:
-            ids = [e.id for e in self.best(1, passive=True)] or [self.entries[0].id]
+            ids = [e.id for e in self.best(1, physical=True) + self.best(1, passive=True)]
+            ids = list(dict.fromkeys(ids)) or [self.entries[0].id]
         y0 = 1 / z0
         f = self.freq
         fg = f / 1e9
@@ -203,7 +213,9 @@ def main(argv=None):
     ap.add_argument('--top', type=int, default=30, help='number of best fits to list')
     ap.add_argument('--noise', type=float, default=None,
                     help='add noise to the S-parameters first, floor in dB (e.g. -40)')
-    ap.add_argument('--plot', default=None, help='save a plot of the best passive fit (PNG)')
+    ap.add_argument('--plot', default=None,
+                    help='save a plot of the best fit with positive element values and the '
+                         'best passive fit (PNG)')
     ap.add_argument('--dps', type=int, default=DEFAULT_DPS, help='working precision, digits')
     ap.add_argument('-v', '--verbose', action='store_true', help='print every fitted network')
     ap.add_argument('--version', action='version', version=f'crcat {__version__}')
