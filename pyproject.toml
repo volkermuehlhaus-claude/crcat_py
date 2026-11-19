@@ -20,9 +20,15 @@ dependencies = [
 
 [project.scripts]
 crcat-seed = "crcat.seed:main"
+crcat-netlist = "crcat.cli_netlist:main"
+
+[project.gui-scripts]
+crcat-gui = "crcat.gui:main"
 
 [project.optional-dependencies]
 plot = ["matplotlib"]
+fast = ["gmpy2"]
+gui = ["PySide6-Essentials", "matplotlib"]
 dev = ["pytest", "sympy", "mat-io", "matplotlib"]
 
 [tool.setuptools.packages.find]
@@ -36,5 +42,5 @@ version = {attr = "crcat.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["slow: full catalog validation (about 1 minute)"]
+markers = ["slow: catalog validation, full catalog searches (about 1.5 minutes in all)"]
 addopts = "-m 'not slow'"

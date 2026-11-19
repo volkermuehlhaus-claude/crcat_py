@@ -18,7 +18,7 @@ from .component import Component, use_ascii_units
 from .fit import DEFAULT_DPS, crfit
 from .sprout import sprout as _sprout
 
-__all__ = ['seed', 'SeedResult', 'SeedEntry']
+__all__ = ['seed', 'SeedResult', 'SeedEntry', 'Cancelled']
 
 
 class SeedEntry:
@@ -26,12 +26,19 @@ class SeedEntry:
     of each solution), ``error`` (best), ``passive`` (Re Y >= 0 at all frequencies) and
     ``physical`` (all element values real and positive), both of the best solution."""
 
-    def __init__(self, component, errors, passive):
+    def __init__(self, component, errors, passive=None):
         self.component = component
         self.errors = errors
         self.error = float(errors[0])
-        self.passive = passive
+        self._passive = passive
         self.physical = component.is_physical(0)
+
+    @property
+    def passive(self):
+        """Passivity of the best solution (computed when first asked for)."""
+        if self._passive is None:
+            self._passive = self.physical or self.component.is_passive(0)
+        return self._passive
 
     @property
     def id(self):
@@ -144,8 +151,13 @@ def _load_data(data, fit, noise_floor_db, rng):
     return net.f.astype(float), _data.admittance(pulled, fit, z0), desc, source, z0
 
 
+class Cancelled(Exception):
+    """Raised when the ``cancel`` callback of a search returns True."""
+
+
 def seed(data, catalog=None, fit='y11', ids=None, sprout=None, noise_floor_db=None,
-         seed_rng=None, dps=DEFAULT_DPS, verbose=False):
+         seed_rng=None, dps=DEFAULT_DPS, verbose=False, max_elements=None, progress=None,
+         cancel=None):
     """Fit catalog networks to data and rank them (CRSeed).
 
     ``data``: Touchstone file name, scikit-rf Network, or (freq in Hz, admittance).
@@ -155,6 +167,8 @@ def seed(data, catalog=None, fit='y11', ids=None, sprout=None, noise_floor_db=No
     ``ids``: Ids to try (default: all). ``sprout``: components already modeled; their
     chained admittance (see :func:`crcat.sprout.sprout`) is subtracted first.
     ``noise_floor_db``: add noise to the S-parameters first (CRSeedAddNoise), e.g. -40.
+    ``max_elements``: skip networks with more elements. ``progress(fraction)`` is called
+    while the search runs; if ``cancel()`` returns True the search stops with Cancelled.
     """
     cat = catalog or _catalog.load()
     rng = np.random.default_rng(seed_rng)
@@ -167,7 +181,15 @@ def seed(data, catalog=None, fit='y11', ids=None, sprout=None, noise_floor_db=No
 
     fits = {}                  # coefficient fit per signature
     entries, skipped = [], []
-    for net in (cat[i] for i in ids) if ids is not None else cat:
+    nets = [cat[i] for i in ids] if ids is not None else list(cat)
+    for k, net in enumerate(nets):
+        if cancel is not None and cancel():
+            raise Cancelled()
+        if progress is not None and k % 10 == 0:
+            progress(k / len(nets))
+        if max_elements is not None and len(net.symVn) > max_elements:
+            skipped.append((net.id, f'more than {max_elements} elements'))
+            continue
         if not net.can_synthesize:
             skipped.append((net.id, 'no synthesis equations'))
             continue
@@ -186,7 +208,7 @@ def seed(data, catalog=None, fit='y11', ids=None, sprout=None, noise_floor_db=No
         if errors is None:
             skipped.append((net.id, 'no valid element values'))
             continue
-        e = SeedEntry(comp, errors, comp.is_passive(0))
+        e = SeedEntry(comp, errors)
         entries.append(e)
         if verbose:
             print(f'CR{e.id} {e.name}: rms {e.error:.4g}{" passive" if e.passive else ""}: '

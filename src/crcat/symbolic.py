@@ -42,7 +42,11 @@ _ROOT_CACHE = {}
 def _roots(key):
     r = _ROOT_CACHE.get(key)
     if r is None:
-        r = mpmath.polyroots(list(key), maxsteps=200, extraprec=2 * mpmath.mp.prec)
+        try:
+            r = mpmath.polyroots(list(key), maxsteps=200, extraprec=2 * mpmath.mp.prec)
+        except mpmath.libmp.NoConvergence:
+            # degenerate polynomial (multiple roots): no usable solution from this root
+            raise ValueError('polynomial roots did not converge') from None
         r = sorted((mpmath.mpmathify(x) for x in r),
                    key=lambda x: (float(mpmath.re(x)), float(mpmath.im(x))))
         if len(_ROOT_CACHE) > 10000:
