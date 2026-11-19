@@ -222,6 +222,10 @@ c.transform('XXXI-33')                     # an equivalent network
 c.is_passive()
 cat.relations(500)                         # [(239, 'Equiv'), (413, 'Equiv'), (500, 'Self')]
 
+from crcat import draw
+draw.save(draw.figure(best), 'best.png')   # schematic with element values
+draw.figure_array([e.component for e in result.best(10)])   # up to ten in a grid
+
 r = crcat.crfit(y, f, [1] * 6, [1] * 6)    # rational fit with 6 + 6 terms
 r, digits = crcat.fit_auto(y, f)           # order and precision chosen automatically
 s_new = crcat.interpolate(network, f_new)  # scikit-rf Network at new frequencies (Hz)
@@ -229,6 +233,17 @@ s_new = crcat.interpolate(network, f_new)  # scikit-rf Network at new frequencie
 
 Units are any consistent set (GHz, nH, nF, ohm or Hz, H, F, ohm). `seed` works in Hz, so
 its element values are in H, F and ohm; `Component.format()` assumes these units.
+
+## Schematics
+
+`crcat.draw` draws every network of the base catalog with CRCat's own layouts (the
+coordinate tables of `CRCat.Draw`, in `src/crcat/data/draw_layout.json`), from the port
+terminal on the left to ground on the right:
+
+![schematics](doc/schematics.png)
+
+Element values are printed for a `Component`, names only for a network. Networks of the
+custom catalog whose name does not start with a known topology have no layout, as in CRCat.
 
 ## What is ported
 
@@ -241,12 +256,12 @@ its element values are in H, F and ohm; `Component.format()` assumes these units
 | `CRComp` (`Eval`, `Fit`, `Transform`, `IsGain`, `ElementValues`) | `crcat.component.Component` |
 | `CRSeed`, `CRSeedAddNoise` | `crcat.seed.seed`, `crcat-seed` |
 | `CRSprout` | `crcat.sprout.sprout` |
+| `CRCat.Draw`, `DrawArray`, `DrawRLC` | `crcat.draw` (`figure`, `figure_array`, `draw_network`) |
 | `SnP` (`Get`, `Pull`, `AddNoise`) | scikit-rf, `crcat.data.pull`, `seed(noise_floor_db=...)` |
 | (not in CRCat) | `crcat.model.extract`, `crcat.netlist`, `crcat-netlist`, `crcat-gui` |
 
-Not ported: generating the catalog and its equations (`FillCat_*`, MATLAB `solve`), the
-schematic drawings (`DrawRLC`, `Draw`, `DrawArray`), `CRFitClean`, and the interactive
-prompts of `CRSeed`. Networks can therefore not be added to the custom catalog in Python yet.
+Not ported: generating the catalog and its equations (`FillCat_*`, MATLAB `solve`),
+`CRFitClean`, and the interactive prompts of `CRSeed`. Networks can therefore not be added to the custom catalog in Python yet.
 
 ### Differences from CRCat
 
@@ -264,9 +279,10 @@ prompts of `CRSeed`. Networks can therefore not be added to the custom catalog i
 - **`root(p, z, k)`**: 33 networks have synthesis equations with the k-th root of a
   polynomial. MATLAB's numbering of the roots is not documented, so all roots are tried; a
   fit returns all solutions, sorted by error.
-- **`Y12`-type data selection** returns the Y-parameter itself. CRCat's code (commit `c805a25`)
-  returns the negative; its author confirmed that this is an error there (the minus sign
-  belongs only to the lower-case `y12`, the pi-model admittance between two ports).
+- **`Y12`-type data selection** returns the Y-parameter itself. CRCat's code (commit
+  `c805a25`) returns the negative; its author confirmed that this is an error there (the
+  minus sign belongs only to the lower-case `y12`, the pi-model admittance between two
+  ports).
 - **The default catalog** is base + custom without the transforms between base and custom
   networks (CRCat recomputes those).
 - The 35 base networks whose synthesis equations are all zero are treated as having none.
