@@ -49,6 +49,10 @@ class MainWindow(QMainWindow):
         self.fmax = QDoubleSpinBox(decimals=3, maximum=1e4, suffix=' GHz')
         for w in (self.fmin, self.fmax):
             w.setSpecialValueText('data')            # 0 = limit of the data
+            w.setToolTip('0 (shown as "data") uses the limit of the data')
+        self.full_range = QPushButton('Full range')
+        self.full_range.setToolTip('Fit all frequencies of the data')
+        self.full_range.clicked.connect(self.reset_band)
         self.require = QComboBox()
         for key in model.REQUIRE:
             self.require.addItem(REQUIRE_TEXT[key], key)
@@ -85,6 +89,7 @@ class MainWindow(QMainWindow):
         form1, form2, form3 = QFormLayout(), QFormLayout(), QFormLayout()
         form1.addRow('Fit band from', self.fmin)
         form1.addRow('to', self.fmax)
+        form1.addRow('', self.full_range)
         form2.addRow('Element values', self.require)
         form2.addRow('Choice', self.pick)
         form3.addRow('Error limit, S-parameters', self.target)
@@ -204,13 +209,30 @@ class MainWindow(QMainWindow):
             self._loaded = ''
             self.status.setText(f'Cannot read {path}: {ex}')
             return False
+        new_file = path != getattr(self, '_loaded', '')
         self._loaded = path
         self.model = None
         self.save_button.setEnabled(False)
+        self.clear_results()
+        if new_file:                                 # the band of another file means nothing here
+            self.reset_band()
         f = self.network.f
         self.status.setText(f'{pathlib.Path(path).name}: {self.network.nports} port(s), '
                             f'{f[0] / 1e9:.6g} to {f[-1] / 1e9:.6g} GHz, {f.size} points.')
         return True
+
+    def reset_band(self):
+        """Fit band back to all frequencies of the data."""
+        self.fmin.setValue(0)
+        self.fmax.setValue(0)
+
+    def clear_results(self):
+        """Empty table, schematic, netlist and plot (a new file or no model)."""
+        self.table.setRowCount(0)
+        self.netlist_view.clear()
+        for fig, canvas in ((self.schematic, self.schematic_canvas), (self.figure, self.canvas)):
+            fig.clear()
+            canvas.draw_idle()
 
     # --- run ----------------------------------------------------------------------------
 

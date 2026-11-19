@@ -73,6 +73,17 @@ def test_gui_extract_and_save(app, tmp_path):
     win.format.setCurrentIndex(win.format.findData('spectre'))
     assert 'subckt dut_model (p1 p2)' in win.netlist_view.toPlainText()
     files = win.save_to(tmp_path / 'out')
+    # another file: old results and the old band are gone; the same file keeps the band
+    other = tmp_path / 'other.s2p'
+    make_network(2, TWO_PORT).write_touchstone(str(other.with_suffix('')))
+    win.fmax.setValue(20)
+    assert win.set_file(src) and win.fmax.value() == 20
+    assert win.set_file(other) and win.fmax.value() == 0 and win.fmax.text() == 'data'
+    assert win.table.rowCount() == 0 and win.netlist_view.toPlainText() == ''
+    assert not win.figure.axes and not win.save_button.isEnabled()
+    win.fmin.setValue(5)
+    win.full_range.click()
+    assert win.fmin.value() == 0 and win.options().fmin is None and win.options().fmax is None
     assert {p.name for p in files} == {
         'dut_crcat.scs', 'dut_crcat.s2p', 'dut_crcat.json', 'dut_crcat.png',
         'dut_crcat_error.png', 'dut_crcat_lrq.png', 'dut_crcat_schematic.png'}
