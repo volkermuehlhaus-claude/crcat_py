@@ -195,6 +195,13 @@ def test_plot_views():
     assert any('limit -40 dB' == t.get_text() for t in fig.legends[0].get_texts())
     fig = plots.compare(m, net, view='lrq')
     assert [ax.get_ylabel() for ax in fig.axes] == ['series L (pH)', 'series R (ohm)', 'Q at port 1']
+    # a flat curve keeps a margin to the frame, and one outlier does not set the scale
+    lo, hi = plots._limits(np.full(50, 73.6))
+    assert lo == 0 and 80 < hi < 95
+    lo, hi = plots._limits(np.r_[1500.0, np.full(99, 5.0)])
+    assert hi < 20
+    lo, hi = plots._limits(np.linspace(-3, -1, 50))
+    assert lo < -3 and -1 < hi < 0
     zs, zin = plots.series_quantities(net.s, 50.0)
     assert np.allclose(zs.imag[0] / (2 * np.pi * net.f[0]), 75e-12, rtol=0.02)
     # a capacitor shows C, a 3-port has no L/R/Q view, many ports show the worst traces only

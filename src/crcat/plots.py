@@ -119,6 +119,16 @@ def series_quantities(s, z0):
         return -1 / y[:, 1, 0], 1 / y[:, 0, 0]
 
 
+def _limits(d):
+    """Axis limits for data values d: the bulk of the data (2nd to 98th percentile, so a few
+    points at the band edge do not set the scale), with a margin of a quarter of the span
+    and at least 15 % of the largest value, so a flat curve does not lie on the frame.
+    Starts at zero for positive data."""
+    lo, hi = np.nanpercentile(d, [2, 98])
+    pad = max(0.25 * (hi - lo), 0.15 * max(abs(lo), abs(hi)), 1e-30)
+    return (min(lo - pad, 0.0) if lo >= 0 else lo - pad), hi + pad
+
+
 def _view_lrq(fig, model, network, all_data):
     f, s_data, s_model = _data(model, network, all_data)
     fg = f / 1e9
@@ -141,11 +151,14 @@ def _view_lrq(fig, model, network, all_data):
         ax.set_ylabel(label)
         ok = np.isfinite(d) & in_band                # scale to the data in the fit band
         if ok.any():
-            lo, hi = np.nanmin(d[ok]), np.nanmax(d[ok])
-            pad = 0.25 * (hi - lo) + 1e-12 * max(abs(hi), 1)
-            ax.set_ylim(min(lo - pad, 0) if lo >= 0 else lo - pad, hi + pad)
+            pos = d[ok][d[ok] > 0]
+            if label.startswith('Q') and pos.size and pos.max() > 50 * pos.min():
+                ax.set_yscale('log')                 # Q over decades (a capacitor from low f)
+                ax.set_ylim(pos.min() / 2, pos.max() * 2)
+            else:
+                ax.set_ylim(*_limits(d[ok]))
     _finish(fig, (ax1, ax2, ax3), model, f,
-            'series branch (-1/Y21) and Q = |Im| / Re of 1/Y11, wide: data, thin: model',
+            'from -1/Y21 (series) and 1/Y11 (Q); wide: data, thin: model',
             all_data, ax1)
 
 
