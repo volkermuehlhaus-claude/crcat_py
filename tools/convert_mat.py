@@ -19,9 +19,10 @@ import subprocess
 import sys
 
 import numpy as np
+import sympy as sp
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from mupad_decode import to_text  # noqa: E402
+from mupad_decode import CoefPrinter, to_text  # noqa: E402
 
 __version__ = '0.1'
 
@@ -66,12 +67,23 @@ def _numbers(v, dtype=float):
     return [dtype(x) for x in a]
 
 
+def _poly_coeffs(text, names):
+    """Coefficients of a polynomial in s, highest power first, as expression text."""
+    loc = {n: sp.Symbol(n) for n in names}
+    loc.update(s=sp.Symbol('s'), Rational=sp.Rational, Float=sp.Float)
+    poly = sp.Poly(sp.sympify(text, locals=loc), loc['s'])
+    pr = CoefPrinter()
+    return [pr.doprint(c) for c in poly.all_coeffs()]
+
+
 def convert_network(e, index):
     net = {'id': index, 'name': _text(e['name'])}
     for f in ('symV', 'symVn', 'symC'):
         net[f] = _names(e[f]) if _is_sym(e[f]) else []
     net['A'] = _scalar(e['symA'])
     net['B'] = _scalar(e['symB'])
+    net['Acoef'] = _poly_coeffs(net['A'], net['symVn'])
+    net['Bcoef'] = _poly_coeffs(net['B'], net['symVn'])
     net['EL'] = _equations(e['symEL']) if _is_sym(e['symEL']) else None
     net['testEL'] = _numbers(e['testEL'])
     net['flagSig'] = _text(e['flagSig'])

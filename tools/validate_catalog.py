@@ -5,7 +5,7 @@ Usage:
 
 For every network:
 1. A/B: the admittance A(s)/B(s) equals a nodal analysis of the netlist (random element
-   values, random complex s).
+   values, random complex s), and the coefficient lists Acoef/Bcoef give A and B.
 2. Synthesis round trip: the coefficients of A and B for the test element values (testEL),
    put into the synthesis equations (EL), give testEL back (in at least one solution row).
 3. Transforms: element values from a transform give the same admittance as the source
@@ -64,6 +64,8 @@ class Net:
         self.vn = d['symVn']
         self.A = compile_scalar(self.vn + ['s'], d['A'])
         self.B = compile_scalar(self.vn + ['s'], d['B'])
+        self.Acoef = compile_rows(self.vn, {'rows': [d['Acoef']]})
+        self.Bcoef = compile_rows(self.vn, {'rows': [d['Bcoef']]})
 
     def y(self, values, s):
         return first_value(self.A, *values, s) / first_value(self.B, *values, s)
@@ -76,6 +78,9 @@ def check_ab(net, rng):
         s = mpmath.mpc(rng.uniform(0.05, 3), rng.uniform(0.05, 3))
         if rel(net.y(vals, s), nodal_admittance(net.vn, net.d['nodes'], vals, s)) > TOL:
             return False
+        for poly, coef in ((net.A, net.Acoef), (net.B, net.Bcoef)):
+            if rel(mpmath.polyval(all_rows(coef, *vals)[0], s), first_value(poly, *vals, s)) > TOL:
+                return False
     return True
 
 

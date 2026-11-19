@@ -285,6 +285,7 @@ class _Printer(_Converter):
         super().__init__(table, None)
         self._root = _root_text
         self.share = share
+        self.root_names = {}
         self.uses = {}
         self.lets = []
         self._count(value)
@@ -364,7 +365,13 @@ class _Printer(_Converter):
             if key.t in ('str', 'ident') and key.a == 'RootOf':
                 # print the polynomial inline, so that z cannot hide in a shared name
                 inline = _Printer(self.table, n, share=False)
-                return (3, self._root(*(inline.conv(k)[1] for k in n.kids[1:])))
+                text = self._root(*(inline.conv(k)[1] for k in n.kids[1:]))
+                if not self.share:
+                    return (3, text)
+                if text not in self.root_names:        # each distinct root once, as a let
+                    self.root_names[text] = f't{len(self.lets) + 1}'
+                    self.lets.append([self.root_names[text], text])
+                return (3, self.root_names[text])
             if key.t in ('str', 'ident'):
                 raise DecodeError(f'unsupported domain element {key.a!r}')
             nrows = int(self.conv(n.kids[1])[1])
@@ -378,7 +385,7 @@ class _Printer(_Converter):
         raise DecodeError(f'cannot convert node {n.t!r}')
 
 
-class _CoefPrinter(StrPrinter):
+class CoefPrinter(StrPrinter):
     """SymPy printer whose output keeps exact numbers for high-precision evaluation."""
 
     def _print_Rational(self, expr):
@@ -394,7 +401,7 @@ def _root_text(poly, var, k):
     loc = {name: sp.Symbol(name) for name in names}
     loc.update(Rational=sp.Rational, Float=sp.Float)
     coeffs = sp.Poly(sp.sympify(poly, locals=loc), loc[var]).all_coeffs()
-    pr = _CoefPrinter()
+    pr = CoefPrinter()
     return 'root([' + ', '.join(pr.doprint(c) for c in coeffs) + f'], {k})'
 
 

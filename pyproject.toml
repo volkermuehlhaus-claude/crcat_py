@@ -15,10 +15,15 @@ requires-python = ">=3.9"
 dependencies = [
     "mpmath",
     "numpy",
+    "scikit-rf",
 ]
 
+[project.scripts]
+crcat-seed = "crcat.seed:main"
+
 [project.optional-dependencies]
-dev = ["pytest", "sympy", "mat-io"]
+plot = ["matplotlib"]
+dev = ["pytest", "sympy", "mat-io", "matplotlib"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

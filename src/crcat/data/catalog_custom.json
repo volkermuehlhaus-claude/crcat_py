@@ -42,6 +42,19 @@
    ],
    "A": "Rc + Lb*s + Ld*s + Cd*Lb*Ld*s**3 + Cd*Ld*Rc*s**2",
    "B": "s*(La*Rc + Lb*Rc + La*Lb*s + La*Ld*s + Lb*Ld*s + Cd*La*Lb*Ld*s**3 + Cd*La*Ld*Rc*s**2 + Cd*Lb*Ld*Rc*s**2)",
+   "Acoef": [
+    "Cd*Lb*Ld",
+    "Cd*Ld*Rc",
+    "Lb + Ld",
+    "Rc"
+   ],
+   "Bcoef": [
+    "Cd*La*Lb*Ld",
+    "Cd*La*Ld*Rc + Cd*Lb*Ld*Rc",
+    "La*Lb + La*Ld + Lb*Ld",
+    "La*Rc + Lb*Rc",
+    "0"
+   ],
    "EL": {
     "rows": [
      [
@@ -156,6 +169,19 @@
    ],
    "A": "Rc + Lb*s + Ld*s + Cdd*Lb*Ld*s**3 + Cdd*Ld*Rc*s**2",
    "B": "s*(La*Rc + Lb*Rc + La*Lb*s + La*Ld*s + Lb*Ld*s + Cdd*La*Lb*Ld*s**3 + Cdd*La*Ld*Rc*s**2 + Cdd*Lb*Ld*Rc*s**2)",
+   "Acoef": [
+    "Cdd*Lb*Ld",
+    "Cdd*Ld*Rc",
+    "Lb + Ld",
+    "Rc"
+   ],
+   "Bcoef": [
+    "Cdd*La*Lb*Ld",
+    "Cdd*La*Ld*Rc + Cdd*Lb*Ld*Rc",
+    "La*Lb + La*Ld + Lb*Ld",
+    "La*Rc + Lb*Rc",
+    "0"
+   ],
    "EL": {
     "rows": [
      [
@@ -269,6 +295,19 @@
    ],
    "A": "Rc + Lb*s + Ld*s + Cdd*Lb*Ld*s**3 + Cdd*Ld*Rc*s**2",
    "B": "s*(La*Rc + Lb*Rc + La*Lb*s + La*Ld*s + Lb*Ld*s + Cdd*La*Lb*Ld*s**3 + Cdd*La*Ld*Rc*s**2 + Cdd*Lb*Ld*Rc*s**2)",
+   "Acoef": [
+    "Cdd*Lb*Ld",
+    "Cdd*Ld*Rc",
+    "Lb + Ld",
+    "Rc"
+   ],
+   "Bcoef": [
+    "Cdd*La*Lb*Ld",
+    "Cdd*La*Ld*Rc + Cdd*Lb*Ld*Rc",
+    "La*Lb + La*Ld + Lb*Ld",
+    "La*Rc + Lb*Rc",
+    "0"
+   ],
    "EL": {
     "rows": [
      [
@@ -373,6 +412,19 @@
    ],
    "A": "Rc + Lb*s + Ldd*s + Cdd*Lb*Ldd*s**3 + Cdd*Ldd*Rc*s**2",
    "B": "s*(La*Rc + Lb*Rc + La*Lb*s + La*Ldd*s + Lb*Ldd*s + Cdd*La*Lb*Ldd*s**3 + Cdd*La*Ldd*Rc*s**2 + Cdd*Lb*Ldd*Rc*s**2)",
+   "Acoef": [
+    "Cdd*Lb*Ldd",
+    "Cdd*Ldd*Rc",
+    "Lb + Ldd",
+    "Rc"
+   ],
+   "Bcoef": [
+    "Cdd*La*Lb*Ldd",
+    "Cdd*La*Ldd*Rc + Cdd*Lb*Ldd*Rc",
+    "La*Lb + La*Ldd + Lb*Ldd",
+    "La*Rc + Lb*Rc",
+    "0"
+   ],
    "EL": {
     "rows": [
      [
@@ -484,6 +536,19 @@
    ],
    "A": "Rcc + Lbb*s + Ld*s + Cd*Lbb*Ld*s**3 + Cd*Ld*Rcc*s**2",
    "B": "s*(La*Rcc + Lbb*Rcc + La*Lbb*s + La*Ld*s + Lbb*Ld*s + Cd*La*Lbb*Ld*s**3 + Cd*La*Ld*Rcc*s**2 + Cd*Lbb*Ld*Rcc*s**2)",
+   "Acoef": [
+    "Cd*Lbb*Ld",
+    "Cd*Ld*Rcc",
+    "Lbb + Ld",
+    "Rcc"
+   ],
+   "Bcoef": [
+    "Cd*La*Lbb*Ld",
+    "Cd*La*Ld*Rcc + Cd*Lbb*Ld*Rcc",
+    "La*Lbb + La*Ld + Lbb*Ld",
+    "La*Rcc + Lbb*Rcc",
+    "0"
+   ],
    "EL": {
     "rows": [
      [
@@ -589,6 +654,15 @@
    ],
    "A": "R + Lb*s",
    "B": "s*(La*R + Lb*R + La*Lb*s)",
+   "Acoef": [
+    "Lb",
+    "R"
+   ],
+   "Bcoef": [
+    "La*Lb",
+    "La*R + Lb*R",
+    "0"
+   ],
    "EL": {
     "rows": [
      [
@@ -655,6 +729,15 @@
    ],
    "A": "R + Lb*s",
    "B": "s*(La*R + Lb*R + La*Lb*s)",
+   "Acoef": [
+    "Lb",
+    "R"
+   ],
+   "Bcoef": [
+    "La*Lb",
+    "La*R + Lb*R",
+    "0"
+   ],
    "EL": {
     "rows": [
      [
@@ -728,24 +811,31 @@
    ],
    "A": "Ca*Ra*s + Cb*Ra*s + Cb*Rd*s + Cb*Ld*s**2 + Ca*Cb*Ld*Ra*s**3 + Ca*Cb*Ra*Rd*s**2 + 1",
    "B": "(Rd + Ld*s)*(Ca*Ra*s + Cb*Ra*s + 1)",
+   "Acoef": [
+    "Ca*Cb*Ld*Ra",
+    "Ca*Cb*Ra*Rd + Cb*Ld",
+    "Ca*Ra + Cb*Ra + Cb*Rd",
+    "1"
+   ],
+   "Bcoef": [
+    "Ca*Ld*Ra + Cb*Ld*Ra",
+    "Ca*Ra*Rd + Cb*Ra*Rd + Ld",
+    "Rd"
+   ],
    "EL": {
     "rows": [
      [
-      "-(-a0*a2*b1 + a0*a3*b0 + a1*a2*b0)**(-2)*(a2**3*b0**3 - a0**3*a2**2*b0*t1 + a1*a2*a3*b0**3 + a0*a2**2*b0*b1**2 - a1*a2**2*b0**2*b1 + a0**4*a3*b1*t1 - a0*a1*a2**2*b0**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) - a2*a3*a0**2*b0**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) - a0**3*a1*a2*b1*t1 + b0*b1*a0**2*a2**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) + a0**2*a1**2*a2*b0*t1 + a0*a2*a3*b0**2*b1*(-2))",
-      "-b0**(-2)*(a2**3*b0**3 + a0**2*a3*b1**3 - a0*a1*a2*b1**3 + a0*a2**2*b0*b1**2 + a1*a2**2*b0**2*b1*(-2) + a1**2*a2*b0*b1**2)**(-1)*(a1*a2**3*b0**4 - a3*a0**4*b1**3*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) - a1**2*a2**2*b0**3*b1 + a0**5*a3*b1**2*t2 + a0*a2**2*a3*b0**4 - a0*a2**3*b0**3*b1 - a0**3*a1*a2**2*b0**2*t2 + a1*a2*a0**3*b1**3*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) + a0*a1*a2**2*b0**2*b1**2 - a0**2*a2*a3*b0**2*b1**2 - a0*a1**2*a2**2*b0**3*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) - a0**4*a1*a2*b1**2*t2 - b0*a0**3*a2**2*b1**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) + a0**4*a2**2*b0*b1*t2 + a1*b1*a0**2*a2**2*b0**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1)*2 + a2*b0*a0**2*a1**2*b1**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1)*(-2) + a0**3*a1**2*a2*b0*b1*t2 + a0*a2*b1*a1**3*b0**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) + a1*a3*b0*a0**3*b1**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) + a2*a3*b1*a0**3*b0**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1))",
-      "b0**(-2)*(-a0*b1 + a1*b0 + a0**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1))",
-      "root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1)",
+      "-(-a0*a2*b1 + a0*a3*b0 + a1*a2*b0)**(-2)*(a2**3*b0**3 - a0**3*a2**2*b0*t1**2 + a1*a2*a3*b0**3 + a0*a2**2*b0*b1**2 - a1*a2**2*b0**2*b1 + a0**4*a3*b1*t1**2 - a0*a1*a2**2*b0**2*t1 - a2*a3*a0**2*b0**2*t1 - a0**3*a1*a2*b1*t1**2 + b0*b1*a0**2*a2**2*t1 + a0**2*a1**2*a2*b0*t1**2 + a0*a2*a3*b0**2*b1*(-2))",
+      "-b0**(-2)*(a2**3*b0**3 + a0**2*a3*b1**3 - a0*a1*a2*b1**3 + a0*a2**2*b0*b1**2 + a1*a2**2*b0**2*b1*(-2) + a1**2*a2*b0*b1**2)**(-1)*(a1*a2**3*b0**4 - a3*a0**4*b1**3*t1 - a1**2*a2**2*b0**3*b1 + a0**5*a3*b1**2*t1**2 + a0*a2**2*a3*b0**4 - a0*a2**3*b0**3*b1 - a0**3*a1*a2**2*b0**2*t1**2 + a1*a2*a0**3*b1**3*t1 + a0*a1*a2**2*b0**2*b1**2 - a0**2*a2*a3*b0**2*b1**2 - a0*a1**2*a2**2*b0**3*t1 - a0**4*a1*a2*b1**2*t1**2 - b0*a0**3*a2**2*b1**2*t1 + a0**4*a2**2*b0*b1*t1**2 + a1*b1*a0**2*a2**2*b0**2*t1*2 + a2*b0*a0**2*a1**2*b1**2*t1*(-2) + a0**3*a1**2*a2*b0*b1*t1**2 + a0*a2*b1*a1**3*b0**2*t1 + a1*a3*b0*a0**3*b1**2*t1 + a2*a3*b1*a0**3*b0**2*t1)",
+      "b0**(-2)*(-a0*b1 + a1*b0 + a0**2*t1)",
+      "t1",
       "a0**(-1)*b0"
      ]
     ],
     "let": [
      [
       "t1",
-      "root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1)**2"
-     ],
-     [
-      "t2",
-      "root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1)**2"
+      "root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1)"
      ]
     ]
    },
