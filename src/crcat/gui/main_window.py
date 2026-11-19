@@ -1,0 +1,284 @@
+"""Main window: file and options at the top, branches and netlist left, plot right."""
+
+import pathlib
+
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.figure import Figure
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+                               QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPlainTextEdit,
+                               QProgressBar, QPushButton, QSpinBox, QSplitter, QTableWidget,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
+
+from .. import __version__, data, model, netlist
+from ..cli_netlist import write_outputs
+from ..plots import compare
+from .worker import ExtractWorker
+
+MAX_ALTERNATIVES = 25
+REQUIRE_TEXT = {'positive': 'All positive', 'positive-r': 'R positive, L and C any sign',
+                'passive': 'Passive, any sign', 'any': 'Any sign'}
+PICK_TEXT = {'simplest': 'Simplest within the error limit', 'best': 'Lowest error'}
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(f'crcat {__version__}: S-parameters to lumped-element netlist')
+        self.resize(1250, 760)
+        self.network = None
+        self.model = None
+        self.worker = None
+        defaults = model.Options()
+
+        # --- file ---
+        self.file_edit = QLineEdit()
+        self.file_edit.setPlaceholderText('Touchstone file (.sNp)')
+        self.file_edit.editingFinished.connect(self._load_from_edit)
+        browse = QPushButton('Browse...')
+        browse.clicked.connect(self.browse)
+        row_file = QHBoxLayout()
+        row_file.addWidget(QLabel('Data:'))
+        row_file.addWidget(self.file_edit, 1)
+        row_file.addWidget(browse)
+
+        # --- options ---
+        self.fmin = QDoubleSpinBox(decimals=3, maximum=1e4, suffix=' GHz')
+        self.fmax = QDoubleSpinBox(decimals=3, maximum=1e4, suffix=' GHz')
+        for w in (self.fmin, self.fmax):
+            w.setSpecialValueText('data')            # 0 = limit of the data
+        self.require = QComboBox()
+        for key in model.REQUIRE:
+            self.require.addItem(REQUIRE_TEXT[key], key)
+        self.pick = QComboBox()
+        for key in model.PICK:
+            self.pick.addItem(PICK_TEXT[key], key)
+        self.target = QDoubleSpinBox(decimals=0, minimum=-120, maximum=-10, suffix=' dB')
+        self.target.setValue(defaults.target_db)
+        self.target.setToolTip('Error limit per branch: RMS difference of the S-parameters '
+                               'that the branch model may cause')
+        self.max_elements = QSpinBox(minimum=1, maximum=5)
+        self.max_elements.setValue(defaults.max_elements)
+        self.format = QComboBox()
+        for key in netlist.FORMATS:
+            self.format.addItem(key, key)
+        self.format.currentIndexChanged.connect(self._show_netlist)
+        form1, form2, form3 = QFormLayout(), QFormLayout(), QFormLayout()
+        form1.addRow('Fit band from', self.fmin)
+        form1.addRow('to', self.fmax)
+        form2.addRow('Element values', self.require)
+        form2.addRow('Choice', self.pick)
+        form3.addRow('Error limit', self.target)
+        form3.addRow('Elements per branch, up to', self.max_elements)
+        row_opt = QHBoxLayout()
+        for form in (form1, form2, form3):
+            row_opt.addLayout(form)
+        row_opt.addStretch(1)
+
+        # --- run ---
+        self.run_button = QPushButton('Extract model')
+        self.run_button.setDefault(True)
+        self.run_button.clicked.connect(self.run)
+        self.cancel_button = QPushButton('Cancel')
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self.cancel)
+        self.save_button = QPushButton('Save netlist and results...')
+        self.save_button.setEnabled(False)
+        self.save_button.clicked.connect(self.save)
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 1000)
+        self.status = QLabel('Choose a Touchstone file.')
+        self.status.setWordWrap(True)
+        row_run = QHBoxLayout()
+        row_run.addWidget(self.run_button)
+        row_run.addWidget(self.cancel_button)
+        row_run.addWidget(self.bar, 1)
+        row_run.addWidget(QLabel('Netlist:'))
+        row_run.addWidget(self.format)
+        row_run.addWidget(self.save_button)
+
+        # --- results ---
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(['Branch', 'Network', 'Error', 'Element values'])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.netlist_view = QPlainTextEdit(readOnly=True)
+        mono = QFont('Consolas')
+        mono.setStyleHint(QFont.StyleHint.Monospace)
+        self.netlist_view.setFont(mono)
+        self.netlist_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        left = QSplitter(Qt.Orientation.Vertical)
+        left.addWidget(self.table)
+        left.addWidget(self.netlist_view)
+        self.figure = Figure(figsize=(6, 5))
+        self.canvas = FigureCanvasQTAgg(self.figure)
+        split = QSplitter(Qt.Orientation.Horizontal)
+        split.addWidget(left)
+        split.addWidget(self.canvas)
+        split.setSizes([620, 630])
+
+        layout = QVBoxLayout()
+        layout.addLayout(row_file)
+        layout.addLayout(row_opt)
+        layout.addLayout(row_run)
+        layout.addWidget(self.status)
+        layout.addWidget(split, 1)
+        central = QWidget()
+        central.setLayout(layout)
+        self.setCentralWidget(central)
+
+    # --- file ---------------------------------------------------------------------------
+
+    def browse(self):
+        start = str(pathlib.Path(self.file_edit.text()).parent) if self.file_edit.text() else ''
+        path, _ = QFileDialog.getOpenFileName(self, 'Touchstone file', start,
+                                              'Touchstone (*.s*p *.y*p *.z*p);;All files (*)')
+        if path:
+            self.set_file(path)
+
+    def _load_from_edit(self):
+        if self.file_edit.text() and (self.network is None
+                                      or self.file_edit.text() != getattr(self, '_loaded', '')):
+            self.set_file(self.file_edit.text())
+
+    def set_file(self, path):
+        """Load a Touchstone file; returns True if it worked."""
+        path = str(path)
+        self.file_edit.setText(path)
+        try:
+            self.network = data.read(path)
+        except Exception as ex:
+            self.network = None
+            self._loaded = ''
+            self.status.setText(f'Cannot read {path}: {ex}')
+            return False
+        self._loaded = path
+        self.model = None
+        self.save_button.setEnabled(False)
+        f = self.network.f
+        self.status.setText(f'{pathlib.Path(path).name}: {self.network.nports} port(s), '
+                            f'{f[0] / 1e9:.6g} to {f[-1] / 1e9:.6g} GHz, {f.size} points.')
+        return True
+
+    # --- run ----------------------------------------------------------------------------
+
+    def options(self):
+        return model.Options(
+            fmin=self.fmin.value() * 1e9 or None, fmax=self.fmax.value() * 1e9 or None,
+            require=self.require.currentData(), pick=self.pick.currentData(),
+            target_db=self.target.value(), max_elements=self.max_elements.value())
+
+    def run(self):
+        if self.worker is not None:
+            return
+        if self.network is None and not (self.file_edit.text() and self.set_file(self.file_edit.text())):
+            self.status.setText('Choose a Touchstone file first.')
+            return
+        self.worker = ExtractWorker(self.network, self.options(), self)
+        self.worker.progress.connect(self._on_progress)
+        self.worker.done.connect(self._on_done)
+        self.worker.failed.connect(self._on_failed)
+        self.worker.cancelled.connect(lambda: self._finish('Cancelled.'))
+        self.run_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
+        self.status.setText('Searching the catalog...')
+        self.worker.start()
+
+    def cancel(self):
+        if self.worker is not None:
+            self.worker.cancel()
+
+    def _on_progress(self, fraction, text):
+        self.bar.setValue(int(1000 * fraction))
+        self.status.setText(f'Searching the catalog: {text}')
+
+    def _finish(self, text):
+        if self.worker is not None:
+            self.worker.wait()
+            self.worker.deleteLater()
+            self.worker = None
+        self.run_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        self.bar.setValue(0)
+        self.status.setText(text)
+
+    def _on_failed(self, text):
+        self._finish(f'Failed: {text}')
+
+    def _on_done(self, m):
+        m.source = pathlib.Path(self._loaded).name
+        self.model = m
+        self._finish('')
+        self.save_button.setEnabled(True)
+        self._fill_table()
+        self._refresh()
+
+    # --- results ------------------------------------------------------------------------
+
+    def _fill_table(self):
+        m = self.model
+        self.table.setRowCount(len(m.branches))
+        for row, b in enumerate(m.branches):
+            self.table.setItem(row, 0, QTableWidgetItem(b.name))
+            combo = QComboBox()
+            for c in b.candidates[:MAX_ALTERNATIVES]:
+                mark = '' if c.error <= b.limit else '  (above limit)'
+                combo.addItem(f'{c.label}, {c.n_elements} el., {c.error_db:.1f} dB{mark}')
+            combo.setToolTip('Other networks that were tried for this branch')
+            combo.currentIndexChanged.connect(lambda index, r=row: self._choose(r, index))
+            self.table.setCellWidget(row, 1, combo)
+            self.table.setItem(row, 2, QTableWidgetItem(''))
+            self.table.setItem(row, 3, QTableWidgetItem(''))
+        self.table.resizeColumnToContents(0)
+        self.table.setColumnWidth(1, 270)
+
+    def _choose(self, row, index):
+        if self.model is not None and index >= 0:
+            self.model.choose(row, index)
+            self._refresh()
+
+    def _refresh(self):
+        m = self.model
+        for row, b in enumerate(m.branches):
+            self.table.item(row, 2).setText(f'{b.chosen.error_db:.1f} dB')
+            self.table.item(row, 3).setText(b.chosen.values_text())
+        warnings = [b.warning() for b in m.branches if b.warning()]
+        text = (f'Model: {m.n_elements()} elements, S-parameter error {m.error_db():.1f} dB rms '
+                f'in the fit band {m.freq[0] / 1e9:.6g} to {m.freq[-1] / 1e9:.6g} GHz.')
+        if warnings:
+            text += '\nWarning: ' + '\nWarning: '.join(warnings)
+        self.status.setText(text)
+        self._show_netlist()
+        compare(m, self.network, self.figure)
+        self.canvas.draw_idle()
+
+    def subckt_name(self):
+        return netlist.subckt_name(pathlib.Path(self._loaded).stem + '_model')
+
+    def _show_netlist(self):
+        if self.model is not None:
+            self.netlist_view.setPlainText(
+                netlist.render(self.model, self.format.currentData(), self.subckt_name()))
+
+    # --- save ---------------------------------------------------------------------------
+
+    def save(self):
+        folder = QFileDialog.getExistingDirectory(self, 'Folder for the results',
+                                                  str(pathlib.Path(self._loaded).parent))
+        if folder:
+            self.save_to(folder)
+
+    def save_to(self, folder):
+        """Write netlist, model response, JSON and plot into ``folder``."""
+        files = write_outputs(self.model, self.network, folder, pathlib.Path(self._loaded).stem,
+                              (self.format.currentData(),), self.subckt_name())
+        self.status.setText('Wrote ' + ', '.join(p.name for p in files) + f' in {folder}')
+        return files
+
+    def closeEvent(self, event):
+        if self.worker is not None:
+            self.worker.cancel()
+            self.worker.wait()
+        super().closeEvent(event)

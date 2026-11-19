@@ -25,14 +25,12 @@ def write_outputs(m, network, outdir, base, formats, name, plot=True):
     p.write_text(json.dumps(m.to_dict(), indent=1), encoding='utf-8')
     files.append(p)
     if plot:
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
         from .plots import compare
         fig = compare(m, network)
+        FigureCanvasAgg(fig)
         p = outdir / f'{base}_crcat.png'
         fig.savefig(p, dpi=120)
-        plt.close(fig)
         files.append(p)
     return files
 

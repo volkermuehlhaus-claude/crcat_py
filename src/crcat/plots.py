@@ -1,4 +1,5 @@
-"""Plots (matplotlib is imported only when a plot is made)."""
+"""Plots (matplotlib is imported only when a plot is made; no pyplot, so the GUI and the
+command line can both use them)."""
 
 import numpy as np
 
@@ -12,8 +13,8 @@ def compare(model, network, fig=None):
     Reciprocal pairs are drawn once (S21, not S12).
     """
     if fig is None:
-        import matplotlib.pyplot as plt
-        fig = plt.figure(figsize=(9, 6))
+        from matplotlib.figure import Figure
+        fig = Figure(figsize=(9, 6))
     fig.clear()
     f = network.f[network.f > 0]
     fg = f / 1e9
@@ -38,8 +39,8 @@ def compare(model, network, fig=None):
     ax1.set_ylabel('magnitude (dB)')
     ax2.set_ylabel('phase (deg)')
     ax2.set_xlabel('frequency (GHz)')
-    ax1.set_title(f'data (wide lines) and model (thin lines), {model.n_elements()} elements, '
-                  f'error {model.error_db():.1f} dB; fit band shaded', fontsize=10)
+    ax1.set_title(f'wide: data, thin: model ({model.n_elements()} elements, '
+                  f'{model.error_db():.1f} dB), fit band shaded', fontsize=10)
     ax1.legend(fontsize=8, ncol=min(k, 6))
     fig.tight_layout()
     return fig

@@ -22,10 +22,101 @@ precision arithmetic.
 
 ```
 pip install -e .            # numpy, mpmath, scikit-rf
-pip install -e ".[plot]"    # also matplotlib, for plots
+pip install -e ".[gui]"     # also PySide6 and matplotlib: window and plots
+pip install -e ".[fast]"    # also gmpy2: the searches run about 1.4 times faster
 ```
 
-## Quick start
+## From S-parameters to a netlist
+
+```
+crcat-netlist mim_170fF.s2p --fmax 100
+crcat-gui                       # the same in a window
+```
+
+A reciprocal n-port is exactly a set of branches: one from each port to ground and one
+between each pair of ports (for a 2-port, the pi network). Each branch is a one-port, so the
+catalog can model it with up to five R, L, C, and the netlist is these networks wired
+together.
+
+For each branch, a candidate network is judged by what it does to the S-parameters: it
+replaces the branch in the data, and the RMS difference of all S-parameters is its error.
+The default choice is the network with the fewest elements, all positive, whose error is
+within the limit (`--target-db`, default -40 dB). "Open" counts as a candidate, so weak
+branches disappear.
+
+Example, a 170 fF MIM capacitor from a Palace simulation (1-300 GHz data, fitted to
+100 GHz):
+
+```
+p1 - gnd   CR3 C          -41.4 dB  C=9.006fF
+p2 - gnd   CR3 C          -41.6 dB  C=0.6499fF
+p1 - p2    CR11 SerRLC    -56.0 dB  R=1.177Ohm L=6.605pH C=172.3fF
+model: 5 elements, S-parameter error -49.5 dB rms, -42.8 dB max
+```
+
+```
+.SUBCKT mim_170fF_model p1 p2
+C_p1 p1 0 9.00639e-15
+C_p2 p2 0 6.49939e-16
+R_p1p2 p1 p1p2_n2 1.17698
+L_p1p2 p1p2_n2 p1p2_n3 6.60537e-12
+C_p1p2 p1p2_n3 p2 1.7233e-13
+.ENDS mim_170fF_model
+```
+
+Written next to the input file: the netlist (`_crcat.sp`; with `--format spectre` or `both`
+also `_crcat.scs`), the S-parameters of the model (`_crcat.sNp`), the result as JSON and a
+plot of data against model.
+
+![crcat-gui](doc/gui.png)
+
+In the window, the Network column lists the other networks tried for each branch; choosing
+one updates netlist, error and plot at once.
+
+Main options (`crcat-netlist --help` lists all):
+
+| Option | Meaning |
+|---|---|
+| `--fmin`, `--fmax` (GHz) | fit band; the plot still shows all data |
+| `--require positive` | all element values positive (default) |
+| `--require positive-r` | resistors positive, L and C of either sign. Still passive, since only resistors dissipate |
+| `--require passive`, `any` | any signs if the branch stays passive; no restriction |
+| `--pick simplest` | fewest elements within the error limit (default) |
+| `--pick best` | lowest error |
+| `--target-db` | error limit per branch, RMS S-parameter difference |
+| `--max-elements` | most elements per branch (1..5) |
+
+Limits:
+
+- **Magnetic coupling between branches.** A pi network of R, L, C has no coupled inductors.
+  A transformer or a center-tapped inductor then needs a negative inductance between two
+  ports (use `--require positive-r`) and a negative resistance for the coupled loss, which
+  only `--require any` allows. The tool warns when a branch misses its limit and when the
+  data of the branch have a negative real part.
+- **Five elements per branch.** A branch with several resonances in the band needs a
+  narrower band.
+- **Wide bands.** Far above the first resonance the pi form can turn unphysical: for the
+  MIM capacitor above, fitted to 300 GHz, the port-2 branch of the data has a negative real
+  part and no network with positive resistors fits it.
+- The model is reciprocal; non-reciprocal data are symmetrized, and the difference is
+  reported.
+
+In Python, without any GUI or plotting import:
+
+```python
+import crcat
+
+model = crcat.extract('dut.s2p', crcat.Options(fmax=100e9))   # or a scikit-rf Network
+print(model.summary())
+text = crcat.to_spice(model, 'dut')
+s = model.s_matrix(freq)              # S-parameters of the model
+model.choose(2, 1)                    # another candidate for branch 2
+```
+
+`extract` takes `progress(fraction, text)` and `cancel()` callbacks; `crcat.gui` is only a
+window on top of this.
+
+## Searching the catalog for one branch
 
 Search the catalog for the best model of the pi-model shunt admittance at port 1:
 
@@ -93,6 +184,7 @@ its element values are in H, F and ohm; `Component.format()` assumes these units
 | `CRSeed`, `CRSeedAddNoise` | `crcat.seed.seed`, `crcat-seed` |
 | `CRSprout` | `crcat.sprout.sprout` |
 | `SnP` (`Get`, `Pull`, `AddNoise`) | scikit-rf, `crcat.data.pull`, `seed(noise_floor_db=...)` |
+| (not in CRCat) | `crcat.model.extract`, `crcat.netlist`, `crcat-netlist`, `crcat-gui` |
 
 Not ported: generating the catalog and its equations (`FillCat_*`, MATLAB `solve`), the
 schematic drawings (`DrawRLC`, `Draw`, `DrawArray`), `CRFitClean`, and the interactive
@@ -177,8 +269,8 @@ itself, plus 306 marked `EqnNotFound`).
 
 ```
 pip install -e ".[dev]"
-python -m pytest            # fast tests (about 5 s)
-python -m pytest -m slow    # catalog validation and full catalog search (about 35 s)
+python -m pytest            # fast tests (about 45 s, GUI offscreen)
+python -m pytest -m slow    # catalog validation, full searches (about 1.5 min)
 ```
 
 The tests check against CRCat's README example and its MATLAB tests (`CRCompTest.m`,
