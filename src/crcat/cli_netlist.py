@@ -59,6 +59,11 @@ def main(argv=None):
                          f'the lowest error (default {d.tolerance:g})')
     ap.add_argument('--max-elements', type=int, default=d.max_elements,
                     help=f'most elements per branch, 1..5 (default {d.max_elements})')
+    ap.add_argument('--form', choices=model.FORM, default=d.form,
+                    help='pi; tee (2-ports); auto (default): pi, and for a 2-port the tee '
+                         'form too if a pi branch misses the limit')
+    ap.add_argument('--no-coupling', action='store_true',
+                    help='do not replace branches by coupled coils (K element)')
     ap.add_argument('--format', choices=netlist.FORMATS + ('both',), default='spice',
                     help='netlist format (default spice)')
     ap.add_argument('--name', default=None, help='subcircuit name (default: from the file)')
@@ -83,7 +88,7 @@ def main(argv=None):
             fmax=None if args.fmax is None else args.fmax * 1e9,
             require=args.require, pick=args.pick, target_db=args.target_db,
             tolerance=args.tolerance, max_elements=args.max_elements,
-            full_search=args.full_search)
+            form=args.form, coupling=not args.no_coupling, full_search=args.full_search)
         m = model.extract(network, opt)
     except ValueError as ex:
         sys.exit(f'error: {ex}')

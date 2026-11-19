@@ -42,7 +42,8 @@ For each branch, a candidate network is judged by what it does to the S-paramete
 replaces the branch in the data, and the RMS difference of all S-parameters is its error.
 The default choice is the network with the fewest elements, all positive, whose error is
 within the limit (`--target-db`, default -40 dB). "Open" counts as a candidate, so weak
-branches disappear.
+branches disappear. A model in two other forms is tried when this pi form fails, see
+[Tee form](#tee-form) and [Coupled coils](#coupled-coils).
 
 Example, a 170 fF MIM capacitor from a Palace simulation (1-300 GHz data, fitted to
 100 GHz):
@@ -51,7 +52,7 @@ Example, a 170 fF MIM capacitor from a Palace simulation (1-300 GHz data, fitted
 p1 - gnd   CR3 C          -41.4 dB  C=9.006fF
 p2 - gnd   CR3 C          -41.6 dB  C=0.6499fF
 p1 - p2    CR11 SerRLC    -56.0 dB  R=1.177Ohm L=6.605pH C=172.3fF
-model: 5 elements, S-parameter error -49.5 dB rms, -42.8 dB max
+model (pi form): 5 elements, S-parameter error -49.5 dB rms, -42.8 dB max
 ```
 
 ```
@@ -73,6 +74,64 @@ plot of data against model.
 In the window, the Network column lists the other networks tried for each branch; choosing
 one updates netlist, error and plot at once.
 
+### Tee form
+
+A device with a common path to ground is a tee by nature: two series legs to a center node
+and one leg from there to ground. Forced into a pi, its loss can land in a branch with a
+negative real part, which no positive resistor can give. For a 2-port, the tool therefore
+also tries the tee form when a pi branch misses its limit, and keeps the form with the
+lower error. A shorted series leg is a candidate there, like an open branch in the pi form.
+
+Example: the same MIM capacitor over the full 1-300 GHz. In the pi form the port-2 branch of
+the data has a negative real part in 96 % of the band (model error -19.3 dB). The tee form:
+
+```
+p1 - c     CR11 SerRLC    -59.9 dB  R=625.8mOhm L=3.286pH C=938.3fF
+p2 - c     CR11 SerRLC    -52.6 dB  R=769.9mOhm L=2.994pH C=216.9fF
+c - gnd    CR3 C          -57.5 dB  C=9.554fF
+model (tee form): 7 elements, S-parameter error -49.2 dB rms, -40.0 dB max
+```
+
+### Coupled coils
+
+Magnetic coupling between two branches shows in the pi form as a negative inductance, and
+often a negative resistance, in the branch between them. When such a branch misses its limit
+(or got a negative element), the tool tries to replace it and its two neighbours by two
+coils with a coupling factor (SPICE `K`, Spectre `mutual_inductor`), plus a common resistor
+if that helps. What the coils do not explain of the branch between the two ports stays a
+branch of its own. The replacement is kept if it lowers the error.
+
+Example: a center-tapped inductor (3-port, center tap at port 3), fitted to 30 GHz. As a pi
+of positive elements over its full band the error was -12.5 dB. With coupled coils:
+
+```
+p1 - gnd   CR3 C          -65.9 dB  C=6.015fF
+p2 - gnd   CR3 C          -65.2 dB  C=6.354fF
+p3 - gnd   open           -40.7 dB  no elements
+p1 - p2    open           -42.2 dB  no elements
+p1, p2 - p3 coupled coils: CR7 SerRL + CR7 SerRL   -42.2 dB
+           R=842.6mOhm L=165.4pH | R=1.111Ohm L=167pH | k=-0.3873
+model (pi form): 7 elements, S-parameter error -38.2 dB rms, -29.9 dB max
+```
+
+```
+R_k12a p1 k12a_n2 0.842632
+L_k12a k12a_n2 p3 1.65399e-10
+R_k12b p2 k12b_n2 1.11083
+L_k12b k12b_n2 p3 1.67024e-10
+K_k12 L_k12a L_k12b -0.387331
+```
+
+The coupling factor is one number for the whole band. Towards the resonance the apparent
+mutual inductance of this inductor grows (from -59 pH to -109 pH at 60 GHz), so over the full
+0.01-60 GHz the same model reaches -29.7 dB only.
+
+Each coil must have an inductor that carries the whole coil current, so coils with a
+capacitor across their terminals (a transformer whose only other branches go to ground) are
+not replaced.
+
+### Options
+
 Main options (`crcat-netlist --help` lists all):
 
 | Option | Meaning |
@@ -85,19 +144,18 @@ Main options (`crcat-netlist --help` lists all):
 | `--pick best` | lowest error |
 | `--target-db` | error limit per branch, RMS S-parameter difference |
 | `--max-elements` | most elements per branch (1..5) |
+| `--form auto`, `pi`, `tee` | auto (default): pi, and the tee form for a 2-port if a pi branch misses the limit |
+| `--no-coupling` | never use coupled coils |
 
 Limits:
 
-- **Magnetic coupling between branches.** A pi network of R, L, C has no coupled inductors.
-  A transformer or a center-tapped inductor then needs a negative inductance between two
-  ports (use `--require positive-r`) and a negative resistance for the coupled loss, which
-  only `--require any` allows. The tool warns when a branch misses its limit and when the
-  data of the branch have a negative real part.
 - **Five elements per branch.** A branch with several resonances in the band needs a
   narrower band.
-- **Wide bands.** Far above the first resonance the pi form can turn unphysical: for the
-  MIM capacitor above, fitted to 300 GHz, the port-2 branch of the data has a negative real
-  part and no network with positive resistors fits it.
+- **Tee form for 2-ports only.** A tee has too few branches for a general n-port.
+- **One coupling factor per coil pair,** see above; and coupled loss that needs a negative
+  resistance stays out unless `--require any`.
+- The tool warns when a branch misses its limit and when the data of that branch have a
+  negative real part.
 - The model is reciprocal; non-reciprocal data are symmetrized, and the difference is
   reported.
 
@@ -206,8 +264,9 @@ prompts of `CRSeed`. Networks can therefore not be added to the custom catalog i
 - **`root(p, z, k)`**: 33 networks have synthesis equations with the k-th root of a
   polynomial. MATLAB's numbering of the roots is not documented, so all roots are tried; a
   fit returns all solutions, sorted by error.
-- **`Y12`-type data selection** returns the Y-parameter itself, as CRCat's documentation of
-  `SnP.Pull` says (its code returns the negative).
+- **`Y12`-type data selection** returns the Y-parameter itself. CRCat's code (commit `c805a25`)
+  returns the negative; its author confirmed that this is an error there (the minus sign
+  belongs only to the lower-case `y12`, the pi-model admittance between two ports).
 - **The default catalog** is base + custom without the transforms between base and custom
   networks (CRCat recomputes those).
 - The 35 base networks whose synthesis equations are all zero are treated as having none.

@@ -44,8 +44,9 @@ def test_seed_subset():
 
 
 def test_seed_upper_case_y_is_not_negated():
-    # Upper-case 'Y11' fits Y11 itself, as CRCat's documentation of SnP.Pull says; CRCat's
-    # code returns -Y11 (question to J. Rautio open). On a 1-port, Y11 equals the pi-model
+    # Upper-case 'Y11' fits Y11 itself, as CRCat's documentation of SnP.Pull says. CRCat's
+    # code (c805a25) returns -Y11, which J. Rautio confirmed as an error there (2026-11-19):
+    # only lower-case 'ymn', m != n, takes the minus. On a 1-port, Y11 equals the pi-model
     # y11, so both selections must give the README result with positive element values.
     ids = [500, 239, 413, 4]
     upper = seed(DATA / 'XXXII-39.y1p', fit='Y11', ids=ids)

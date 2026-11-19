@@ -79,11 +79,12 @@ def test_require_modes():
     # a negative inductance between the ports (magnetic coupling in a pi model)
     parts = {(1,): ('C', [20e-15]), (2,): ('C', [20e-15]), (1, 2): ('L', [-0.3e-9])}
     net = make_network(2, parts)
-    m = model.extract(net)                                   # positive: cannot fit
+    only_pi = dict(form='pi', coupling=False)
+    m = model.extract(net, model.Options(**only_pi))         # positive: cannot fit
     b = m.branches[2]
     assert b.ports == (1, 2) and b.target_missed and 'limit not reached' in b.warning()
     assert all(v > 0 for *_, v in m.elements())
-    m = model.extract(net, model.Options(require='positive-r', pick='best'))
+    m = model.extract(net, model.Options(require='positive-r', pick='best', **only_pi))
     assert m.error_db() < -150
     assert np.allclose(chosen(m)[(1, 2)].component.values[0], [-0.3e-9], rtol=1e-8)
     # negative resistance: allowed only with 'any'
@@ -137,19 +138,136 @@ def test_progress_and_cancel():
         model.extract(net, cancel=lambda: len(seen) > 0)
 
 
+# --- tee form and coupled coils ---------------------------------------------------------
+
+def make_tee(leg1, leg2, center, f=F, z0=50.0):
+    """2-port tee from (catalog name, values) per leg; None = short (legs) or open."""
+    cat = crcat.load('base')
+
+    def y(part):
+        return Component(part[0], cat, values=part[1]).eval(f, 0)
+    za = 0 * f if leg1 is None else 1 / y(leg1)
+    zb = 0 * f if leg2 is None else 1 / y(leg2)
+    yc = 0 * f if center is None else y(center)
+    return skrf.Network(frequency=skrf.Frequency.from_f(f, unit='hz'),
+                        s=model._tee_s(za, zb, yc, z0), z0=z0)
+
+
+TEE = (('SerRL', [1.0, 0.2e-9]), ('SerRL', [1.5, 0.15e-9]), ('SerRC', [8.0, 300e-15]))
+
+
+def test_tee_form_round_trip():
+    net = make_tee(*TEE)
+    m = model.extract(net, model.Options(form='tee', pick='best'))
+    assert m.form == 'tee' and m.error_db() < -150 and m.n_elements() == 6
+    assert [b.name for b in m.branches] == ['p1 - c', 'p2 - c', 'c - gnd']
+    text = netlist.to_spice(m, 'dut')
+    assert np.allclose(spice_s_parameters(text, F), m.s_matrix(F), atol=1e-9)
+    assert ' c ' in text or text.count(' c\n')
+    with pytest.raises(ValueError):
+        model.extract(make_network(1, {(1,): ('C', [1e-14])}), model.Options(form='tee'))
+
+
+@pytest.mark.slow
+def test_auto_takes_the_tee_form_when_pi_fails():
+    net = make_tee(*TEE)
+    pi = model.extract(net, model.Options(form='pi', coupling=False))
+    assert pi.warnings() and pi.error_db() > -40          # a tee is no pi of small branches
+    auto = model.extract(net)
+    assert auto.form == 'tee' and not auto.warnings() and auto.error() < pi.error()
+    # data that are a pi stay a pi
+    assert model.extract(make_network(2, TWO_PORT)).form == 'pi'
+
+
+def test_tee_with_shorted_legs():
+    # only the center leg: both series legs are shorts; one merges the center node into
+    # p1, the other becomes a resistor of 1e-6 ohm between the ports
+    m = model.extract(make_tee(None, None, TEE[2]), model.Options(form='tee', pick='best'))
+    assert [b.chosen.label for b in m.branches[:2]] == ['short', 'short']
+    assert m.error_db() < -150
+    text = netlist.to_spice(m, 'dut')
+    assert 'Rshort_p2c p2 p1 1e-06' in text
+    assert not any(' c ' in ln + ' ' for ln in text.splitlines() if ln[0] in 'RLC')
+    assert np.allclose(spice_s_parameters(text, F), m.s_matrix(F), atol=1e-6)
+
+
+def make_transformer(l1, l2, k, r1, r2, f=F, z0=50.0, rc=0.0):
+    w = 2 * np.pi * f
+    z = np.zeros((f.size, 2, 2), dtype=complex)
+    z[:, 0, 0] = r1 + rc + 1j * w * l1
+    z[:, 1, 1] = r2 + rc + 1j * w * l2
+    z[:, 0, 1] = z[:, 1, 0] = rc + 1j * w * k * np.sqrt(l1 * l2)
+    y = np.linalg.inv(z)
+    return skrf.Network(frequency=skrf.Frequency.from_f(f, unit='hz'), s=model._y2s(y, z0), z0=z0)
+
+
+def test_coupled_coils():
+    # opposite winding sense: the pi form needs a negative inductance between the ports
+    net = make_transformer(0.3e-9, 0.5e-9, -0.6, 1.0, 2.0)
+    plain = model.extract(net, model.Options(form='pi', coupling=False))
+    assert plain.warnings()                                # needs a negative inductance
+    m = model.extract(net, model.Options(form='pi', pick='best'))
+    assert len(m.couplings) == 1 and not m.warnings()
+    g = m.couplings[0]
+    assert g.ports == (1, 2, 0) and abs(g.k + 0.6) < 1e-3 and g.rc == 0
+    assert [c.network.name for c in g.coils] == ['SerRL', 'SerRL']
+    assert np.allclose(sorted(g.coils[1].values[0]), [0.5e-9, 2.0], rtol=1e-3)
+    assert m.error_db() < -60 and all(v > 0 for _, kind, *_, v in m.elements() if kind != 'K')
+    assert [r.name for r in m.rows()] == ['p1 - p2', 'p1, p2 - gnd']
+    assert m.rows()[0].chosen.label == 'open'
+    text = netlist.to_spice(m, 'dut')
+    assert 'K_k12 L_k12a L_k12b -0.6' in text
+    assert np.allclose(spice_s_parameters(text, F), m.s_matrix(F), atol=1e-9)
+    assert 'mutual_inductor coupling=-0.6' in netlist.to_spectre(m, 'dut')
+    d = m.to_dict()
+    assert len(d['couplings']) == 1 and len(d['branches']) == 1
+
+
+@pytest.mark.slow
+def test_coupled_coils_with_common_resistor_and_negative_k():
+    net = make_transformer(0.3e-9, 0.3e-9, -0.4, 1.0, 1.0, rc=0.5)
+    m = model.extract(net, model.Options(form='pi', pick='best'))
+    g = m.couplings[0]
+    assert abs(g.k + 0.4) < 1e-3 and abs(g.rc - 0.5) < 1e-3 and m.error_db() < -60
+    text = netlist.to_spice(m, 'dut')
+    assert 'Rc_k12 k12_m 0 0.5' in text
+    assert np.allclose(spice_s_parameters(text, F), m.s_matrix(F), atol=1e-9)
+
+
 # --- netlists ---------------------------------------------------------------------------
 
 def spice_s_parameters(text, f, z0=50.0):
     """S-parameters of a SPICE subcircuit of R, L, C by nodal analysis (independent of
     the model code)."""
     lines = [ln.split() for ln in text.splitlines() if ln and ln[0] not in '*.']
+    couplings = [ln for ln in lines if ln[0][0] == 'K']
+    lines = [ln for ln in lines if ln[0][0] != 'K']
+    coupled = {name for _, a, b, _ in couplings for name in (a, b)}
     head = next(ln.split() for ln in text.splitlines() if ln.upper().startswith('.SUBCKT'))
     ports = head[2:]
     nodes = ports + sorted({n for _, a, b, _ in lines for n in (a, b)} - set(ports) - {'0'})
     idx = {n: k for k, n in enumerate(nodes)}
     s = 2j * np.pi * f
     y = np.zeros((f.size, len(nodes), len(nodes)), dtype=complex)
+    def stamp(a, b, c, e, g):                        # current a->b driven by voltage c->e
+        for p, sp in ((a, 1), (b, -1)):
+            for q, sq in ((c, 1), (e, -1)):
+                if p != '0' and q != '0':
+                    y[:, idx[p], idx[q]] += sp * sq * g
+
+    by_name = {ln[0]: ln for ln in lines}
+    for _, la, lb, k in couplings:
+        (_, a1, b1, v1), (_, a2, b2, v2) = by_name[la], by_name[lb]
+        l1, l2 = float(v1), float(v2)
+        m = float(k) * np.sqrt(l1 * l2)
+        det = s * (l1 * l2 - m * m)                  # inverse of s * [[l1, m], [m, l2]]
+        stamp(a1, b1, a1, b1, l2 / det)
+        stamp(a2, b2, a2, b2, l1 / det)
+        stamp(a1, b1, a2, b2, -m / det)
+        stamp(a2, b2, a1, b1, -m / det)
     for name, a, b, value in lines:
+        if name in coupled:
+            continue
         v = float(value)
         g = {'R': 1 / v + 0 * s, 'L': 1 / (s * v), 'C': s * v}[name[0].upper()]
         for p, q in ((a, b), (b, a)):
@@ -199,7 +317,8 @@ def test_cli(tmp_path, capsys):
     make_network(2, TWO_PORT).write_touchstone(str(src.with_suffix('')))
     main([str(src), '--format', 'both', '--fmax', '30', '--pick', 'best', '-o', str(tmp_path / 'out')])
     out = capsys.readouterr().out
-    assert 'crcat-netlist' in out and 'fmax=30.0' in out and 'model: 5 elements' in out
+    assert 'crcat-netlist' in out and 'fmax=30.0' in out
+    assert 'model (pi form): 5 elements' in out
     files = {p.name for p in (tmp_path / 'out').iterdir()}
     assert files == {'dut_crcat.sp', 'dut_crcat.scs', 'dut_crcat.s2p', 'dut_crcat.json',
                      'dut_crcat.png'}

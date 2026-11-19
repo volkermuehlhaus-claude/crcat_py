@@ -6,7 +6,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPlainTextEdit,
                                QProgressBar, QPushButton, QSpinBox, QSplitter, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
@@ -60,6 +60,16 @@ class MainWindow(QMainWindow):
                                'that the branch model may cause')
         self.max_elements = QSpinBox(minimum=1, maximum=5)
         self.max_elements.setValue(defaults.max_elements)
+        self.form = QComboBox()
+        for key, text in (('auto', 'Automatic'), ('pi', 'Pi'), ('tee', 'Tee (2-port)')):
+            self.form.addItem(text, key)
+        self.form.setToolTip('Pi: a branch from each port to ground and between the ports. '
+                             'Tee: two series legs and one leg to ground. Automatic tries '
+                             'the tee form if a pi branch misses the error limit.')
+        self.coupling = QCheckBox('Coupled coils')
+        self.coupling.setChecked(defaults.coupling)
+        self.coupling.setToolTip('Replace branches that need a negative inductance by two '
+                                 'coils with a coupling factor')
         self.format = QComboBox()
         for key in netlist.FORMATS:
             self.format.addItem(key, key)
@@ -71,8 +81,11 @@ class MainWindow(QMainWindow):
         form2.addRow('Choice', self.pick)
         form3.addRow('Error limit', self.target)
         form3.addRow('Elements per branch, up to', self.max_elements)
+        form4 = QFormLayout()
+        form4.addRow('Form', self.form)
+        form4.addRow('', self.coupling)
         row_opt = QHBoxLayout()
-        for form in (form1, form2, form3):
+        for form in (form1, form2, form3, form4):
             row_opt.addLayout(form)
         row_opt.addStretch(1)
 
@@ -168,7 +181,8 @@ class MainWindow(QMainWindow):
         return model.Options(
             fmin=self.fmin.value() * 1e9 or None, fmax=self.fmax.value() * 1e9 or None,
             require=self.require.currentData(), pick=self.pick.currentData(),
-            target_db=self.target.value(), max_elements=self.max_elements.value())
+            target_db=self.target.value(), max_elements=self.max_elements.value(),
+            form=self.form.currentData(), coupling=self.coupling.isChecked())
 
     def run(self):
         if self.worker is not None:
@@ -219,16 +233,22 @@ class MainWindow(QMainWindow):
 
     def _fill_table(self):
         m = self.model
-        self.table.setRowCount(len(m.branches))
-        for row, b in enumerate(m.branches):
-            self.table.setItem(row, 0, QTableWidgetItem(b.name))
-            combo = QComboBox()
-            for c in b.candidates[:MAX_ALTERNATIVES]:
-                mark = '' if c.error <= b.limit else '  (above limit)'
-                combo.addItem(f'{c.label}, {c.n_elements} el., {c.error_db:.1f} dB{mark}')
-            combo.setToolTip('Other networks that were tried for this branch')
-            combo.currentIndexChanged.connect(lambda index, r=row: self._choose(r, index))
-            self.table.setCellWidget(row, 1, combo)
+        self.table.clearContents()
+        rows = m.rows()
+        self.table.setRowCount(len(rows))
+        for row, r in enumerate(rows):
+            self.table.setItem(row, 0, QTableWidgetItem(r.name))
+            if isinstance(r, model.Branch):
+                combo = QComboBox()
+                for c in r.candidates[:MAX_ALTERNATIVES]:
+                    mark = '' if c.error <= r.limit else '  (above limit)'
+                    combo.addItem(f'{c.label}, {c.n_elements} el., {c.error_db:.1f} dB{mark}')
+                combo.setToolTip('Other networks that were tried for this branch')
+                combo.currentIndexChanged.connect(
+                    lambda index, b=m.branches.index(r): self._choose(b, index))
+                self.table.setCellWidget(row, 1, combo)
+            else:
+                self.table.setItem(row, 1, QTableWidgetItem(r.label))
             self.table.setItem(row, 2, QTableWidgetItem(''))
             self.table.setItem(row, 3, QTableWidgetItem(''))
         self.table.resizeColumnToContents(0)
@@ -241,11 +261,12 @@ class MainWindow(QMainWindow):
 
     def _refresh(self):
         m = self.model
-        for row, b in enumerate(m.branches):
-            self.table.item(row, 2).setText(f'{b.chosen.error_db:.1f} dB')
-            self.table.item(row, 3).setText(b.chosen.values_text())
-        warnings = [b.warning() for b in m.branches if b.warning()]
-        text = (f'Model: {m.n_elements()} elements, S-parameter error {m.error_db():.1f} dB rms '
+        for row, r in enumerate(m.rows()):
+            shown = r.chosen if isinstance(r, model.Branch) else r
+            self.table.item(row, 2).setText(f'{shown.error_db:.1f} dB')
+            self.table.item(row, 3).setText(shown.values_text())
+        warnings = m.warnings()
+        text = (f'Model ({m.form} form): {m.n_elements()} elements, S-parameter error {m.error_db():.1f} dB rms '
                 f'in the fit band {m.freq[0] / 1e9:.6g} to {m.freq[-1] / 1e9:.6g} GHz.')
         if warnings:
             text += '\nWarning: ' + '\nWarning: '.join(warnings)

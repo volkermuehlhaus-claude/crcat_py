@@ -40,7 +40,7 @@ def test_gui_extract_and_save(app, tmp_path):
     assert not win.run_button.isEnabled()
     wait_for(app, lambda: win.model is not None and win.worker is None)
     assert win.table.rowCount() == 3 and win.save_button.isEnabled()
-    assert win.model.error_db() < -150 and 'Model: 5 elements' in win.status.text()
+    assert win.model.error_db() < -150 and 'Model (pi form): 5 elements' in win.status.text()
     assert '.SUBCKT dut_model p1 p2' in win.netlist_view.toPlainText()
     # another candidate for the series branch: table, netlist and error follow
     combo = win.table.cellWidget(2, 1)

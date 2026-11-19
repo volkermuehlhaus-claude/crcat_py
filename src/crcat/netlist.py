@@ -1,5 +1,7 @@
 """Netlist text for a :class:`crcat.model.Model`: SPICE and Spectre subcircuits.
 
+Coupled coils are written as a K element (SPICE) or mutual_inductor (Spectre).
+
 Ports are p1..pN, ground is node 0 (the global ground of both simulators). Values are in
 ohm, H and F.
 """
@@ -25,13 +27,13 @@ def _header(model, comment):
     if model.source:
         lines.append(f'Data: {model.source}')
     lines.append(f'Fit band {model.freq[0] / 1e9:.6g} to {model.freq[-1] / 1e9:.6g} GHz, '
-                 f'elements {o.require}, choice {o.pick}')
+                 f'{model.form} form, elements {o.require}, choice {o.pick}')
     lines.append(f'S-parameter error of the model: {model.error_db():.1f} dB rms, '
                  f'reference {model.z0:g} ohm')
-    negative = [n for n, *_, v in model.elements() if v <= 0]
+    negative = [n for n, kind, *_, v in model.elements() if kind != 'K' and v <= 0]
     if negative:
         lines.append('WARNING: negative element values: ' + ' '.join(negative))
-    lines += ['WARNING: ' + b.warning() for b in model.branches if b.warning()]
+    lines += ['WARNING: ' + w for w in model.warnings()]
     return [f'{comment} {line}' for line in lines]
 
 
@@ -39,17 +41,13 @@ def _ports(model):
     return [f'p{i + 1}' for i in range(model.nports)]
 
 
-def _branch_comment(b):
-    return f'branch {b.name}: {b.chosen.label}, error {b.chosen.error_db:.1f} dB'
-
-
 def to_spice(model, name='crcat_model'):
     """SPICE subcircuit (ngspice, Xyce, HSPICE)."""
     lines = _header(model, '*')
     lines.append(f'.SUBCKT {name} {" ".join(_ports(model))}')
-    for b in model.branches:
-        lines.append('* ' + _branch_comment(b))
-        for ename, kind, n1, n2, value in b.elements():
+    for comment, part in model.sections():
+        lines.append('* ' + comment)
+        for ename, kind, n1, n2, value in part:      # for K: the two inductor names
             lines.append(f'{ename} {n1} {n2} {value:.6g}')
     lines.append(f'.ENDS {name}')
     return '\n'.join(lines) + '\n'
@@ -59,9 +57,13 @@ def to_spectre(model, name='crcat_model'):
     """Spectre subcircuit."""
     lines = _header(model, '//')
     lines += ['simulator lang=spectre', f'subckt {name} ({" ".join(_ports(model))})']
-    for b in model.branches:
-        lines.append('// ' + _branch_comment(b))
-        for ename, kind, n1, n2, value in b.elements():
+    for comment, part in model.sections():
+        lines.append('// ' + comment)
+        for ename, kind, n1, n2, value in part:
+            if kind == 'K':
+                lines.append(f'    {ename} mutual_inductor coupling={value:.6g} '
+                             f'ind1={n1} ind2={n2}')
+                continue
             prim, par = _SPECTRE[kind]
             lines.append(f'    {ename} ({n1} {n2}) {prim} {par}={value:.6g}')
     lines.append(f'ends {name}')

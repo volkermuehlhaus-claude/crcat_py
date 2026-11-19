@@ -1,14 +1,21 @@
-"""From network data to a lumped model: one catalog network per branch of a pi network.
+"""From network data to a lumped model: one catalog network per branch.
 
-A reciprocal n-port is exactly a set of branches: one from each port to ground (admittance
-= sum of a column of Y) and one between each pair of ports (admittance = -Ymn). Each branch
-is a one-port admittance, which the catalog search can model with up to five R, L, C.
+**Pi form.** A reciprocal n-port is exactly a set of branches: one from each port to ground
+(admittance = sum of a column of Y) and one between each pair of ports (admittance = -Ymn).
+Each branch is a one-port, which the catalog search models with up to five R, L, C.
+
+**Tee form** (2-ports): two series legs from the ports to a center node and one leg from
+the center to ground (Z11 - Z21, Z22 - Z21, Z21). A device with a common path to ground is
+a tee by nature; in the pi form its loss can end up in a branch with a negative real part.
+
+**Coupled coils.** Magnetic coupling between two branches shows in the pi form as a
+negative inductance (and resistance) in the branch between them. Such a triangle of
+branches is replaced by two coils with a coupling factor, and a common resistor if needed.
 
 For every branch the candidates are judged by what they do to the S-parameters: the branch
-admittance in the measured Y-matrix is replaced by the candidate's, and the RMS difference
-of all S-parameters is the candidate's error. The default choice is the network with the
-fewest elements, all positive, whose error is within the limit; "open" (no elements) is a
-candidate too.
+in the data is replaced by the candidate, and the RMS difference of all S-parameters is the
+candidate's error. The default choice is the network with the fewest elements, all positive,
+whose error is within the limit; "open" (or "short" for a series leg) is a candidate too.
 
 No printing, no plotting, no GUI here: :func:`extract` returns a :class:`Model`, and takes
 ``progress`` and ``cancel`` callbacks.
@@ -20,16 +27,19 @@ import math
 import numpy as np
 
 from . import catalog as _catalog
-from .component import Component
+from .component import Component, format_value
 from .fit import DEFAULT_DPS, crfit, evaluate
 from .seed import Cancelled
 
-__all__ = ['Options', 'Model', 'Branch', 'Candidate', 'extract', 'branch_admittances',
-           'Cancelled']
+__all__ = ['Options', 'Model', 'Branch', 'Candidate', 'Coupled', 'extract',
+           'branch_admittances', 'Cancelled']
 
 REQUIRE = ('positive', 'positive-r', 'passive', 'any')
 PICK = ('simplest', 'best')
+FORM = ('auto', 'pi', 'tee')
 EQUAL_ERROR = 1e-10      # RMS |S difference| below which two candidates count as equal
+SHORT_OHM = 1e-6         # resistor written for a shorted leg that cannot be merged away
+K_MAX = 0.999            # largest coupling factor accepted
 
 
 @dataclasses.dataclass
@@ -45,6 +55,10 @@ class Options:
     target_db: error limit for 'simplest', RMS |S difference| in dB (-40 dB = 0.01).
     tolerance: if no candidate reaches target_db, the limit is tolerance x the lowest error.
     max_elements: largest number of elements per branch (1..5).
+    form: 'pi', 'tee' (2-ports only) or 'auto': pi, and for a 2-port also the tee form if
+        a pi branch misses the error limit; the form with the lower error is kept.
+    coupling: replace a branch that misses the limit (or has a negative element) and its
+        two neighbours by coupled coils, if that lowers the error (pi form).
     full_search: synthesize every network instead of only those that can be chosen
         (slower, same result; fills the list of alternatives completely).
     dps: working precision of the fits, decimal digits.
@@ -56,6 +70,8 @@ class Options:
     target_db: float = -40.0
     tolerance: float = 1.25
     max_elements: int = 5
+    form: str = 'auto'
+    coupling: bool = True
     full_search: bool = False
     dps: int = DEFAULT_DPS
 
@@ -64,6 +80,8 @@ class Options:
             raise ValueError(f'require must be one of {REQUIRE}')
         if self.pick not in PICK:
             raise ValueError(f'pick must be one of {PICK}')
+        if self.form not in FORM:
+            raise ValueError(f'form must be one of {FORM}')
         if self.tolerance < 1:
             raise ValueError('tolerance must be >= 1')
         if not 1 <= self.max_elements <= 5:
@@ -71,60 +89,81 @@ class Options:
         if self.target_db >= 0:
             raise ValueError('target_db must be negative')
 
+    @property
+    def target(self):
+        return 10 ** (self.target_db / 20)
+
+
+def _db(x):
+    return 20 * math.log10(max(x, 1e-300))
+
 
 class Candidate:
     """A network with element values for one branch. ``error``: RMS |S difference| when
     this candidate replaces the branch in the data; ``error_y``: RMS error of the branch
-    admittance (S)."""
+    admittance (S). ``trivial``: 'open' or 'short' for the candidates without elements."""
 
-    def __init__(self, component, error, error_y):
+    def __init__(self, component, error, error_y, trivial=None):
         self.component = component
         self.error = float(error)
         self.error_y = float(error_y)
+        self.trivial = trivial
 
     @property
     def n_elements(self):
         return len(self.component.network.symVn) if self.component is not None else 0
 
     @property
-    def is_open(self):
+    def is_trivial(self):
         return self.component is None
 
     @property
+    def is_open(self):
+        return self.trivial == 'open'
+
+    @property
     def label(self):
-        if self.is_open:
-            return 'open'
+        if self.is_trivial:
+            return self.trivial
         net = self.component.network
         return f'CR{net.id} {net.name}'
 
     @property
     def error_db(self):
-        return 20 * math.log10(max(self.error, 1e-300))
+        return _db(self.error)
 
     def values_text(self):
-        return 'no elements' if self.is_open else self.component.format()
+        return 'no elements' if self.is_trivial else self.component.format()
 
     def __repr__(self):
         return f'<{self.label}: {self.error_db:.1f} dB, {self.values_text()}>'
 
 
-class Branch:
-    """One branch of the pi network between ``node1`` and ``node2`` ('p1'.., '0')."""
+def _node_name(node):
+    return 'gnd' if node == '0' else node
 
-    def __init__(self, ports, freq, y):
-        self.ports = ports                       # (i,) shunt at port i; (i, j) between ports
-        self.node1 = f'p{ports[0]}'
-        self.node2 = f'p{ports[1]}' if len(ports) == 2 else '0'
-        self.tag = 'p' + 'p'.join(str(p) for p in ports)
+
+class Branch:
+    """One branch between ``node1`` and ``node2`` ('p1'.., 'c' = tee center, '0' = ground).
+
+    ``y``: admittance of the branch in the data. ``ports``: for pi branches, (i,) or (i, j).
+    ``group``: the :class:`Coupled` group that replaces this branch, if any.
+    """
+
+    def __init__(self, node1, node2, tag, freq, y, trivial='open', ports=None):
+        self.node1, self.node2, self.tag = node1, node2, tag
+        self.ports = ports
         self.freq, self.y = freq, y
-        self.candidates = []                     # acceptable ones, best choice first
+        self.trivial = trivial
+        self.candidates = []                     # best choice first
         self.chosen = None
         self.limit = None                        # error limit used for the choice
         self.target = None                       # target error (RMS |S difference|)
+        self.group = None
 
     @property
     def name(self):
-        return f'{self.node1} - {"gnd" if self.node2 == "0" else self.node2}'
+        return f'{self.node1} - {_node_name(self.node2)}'
 
     @property
     def target_missed(self):
@@ -133,12 +172,16 @@ class Branch:
 
     @property
     def negative_real_part(self):
-        """Share (0..1) of the fit band where the branch admittance of the data has a
-        clearly negative real part: there, no network of positive elements can fit it."""
+        """Share (0..1) of the fit band where the branch of the data has a clearly negative
+        real part: there, no network with positive resistors can fit it."""
         return float(np.mean(self.y.real < -0.02 * np.abs(self.y)))
 
+    def has_negative_element(self):
+        return (self.chosen is not None and not self.chosen.is_trivial
+                and any(v < 0 for v in self.chosen.component.values[0]))
+
     def warning(self):
-        if not self.target_missed:
+        if self.group is not None or not self.target_missed:
             return ''
         text = f'{self.name}: error limit not reached'
         if self.negative_real_part > 0.1:
@@ -148,32 +191,121 @@ class Branch:
         return text
 
     def admittance(self, freq):
-        """Admittance of the chosen candidate at ``freq`` (Hz)."""
+        """Admittance of the chosen candidate at ``freq`` (Hz); inf for a short."""
         freq = np.asarray(freq, dtype=float)
-        if self.chosen is None or self.chosen.is_open:
+        c = self.chosen
+        if c is None or c.trivial == 'open':
             return np.zeros(freq.size, dtype=complex)
-        return self.chosen.component.eval(freq, 0)
+        if c.trivial == 'short':
+            return np.full(freq.size, np.inf, dtype=complex)
+        return c.component.eval(freq, 0)
+
+    def elements(self, alias=None):
+        """Chosen elements as (name, kind, node1, node2, value)."""
+        if self.chosen is None or self.chosen.is_trivial:
+            return []
+        alias = alias or {}
+        return _component_elements(self.chosen.component, alias.get(self.node1, self.node1),
+                                   alias.get(self.node2, self.node2), self.tag)
+
+
+def _component_elements(comp, node1, node2, tag):
+    out = []
+    for (sym, n1, n2), value in zip(comp.network.connections, comp.values[0]):
+        nodes = [node1 if n == 1 else node2 if n == 0 else f'{tag}_n{n}' for n in (n1, n2)]
+        out.append((f'{sym}_{tag}', sym[0], nodes[0], nodes[1], value))
+    return out
+
+
+def series_inductor(comp):
+    """Index of the largest positive inductor that carries the whole current of the
+    one-port (removing it separates the two terminals), or None."""
+    conns = comp.network.connections
+    best = None
+    for k, ((sym, _, _), value) in enumerate(zip(conns, comp.values[0])):
+        if sym[0] != 'L' or not value > 0:
+            continue
+        reach, grew = {1}, True
+        while grew:
+            grew = False
+            for m, (_, a, b) in enumerate(conns):
+                if m != k and (a in reach) != (b in reach):
+                    reach |= {a, b}
+                    grew = True
+        if 0 not in reach and (best is None or value > comp.values[0][best]):
+            best = k
+    return best
+
+
+class Coupled:
+    """Two coupled coils from ports i and j to a common node, which is node k (a port or
+    ground) or, with a common resistor ``rc``, a node joined to k by that resistor."""
+
+    def __init__(self, ports, coils, rc, mutual, error):
+        self.ports = ports                       # (i, j, k); k = 0 for ground
+        self.coils = coils                       # two Components
+        self.rc, self.mutual = rc, mutual
+        self.error = float(error)
+        self.index = [series_inductor(c) for c in coils]
+        la, lb = (c.values[0][n] for c, n in zip(coils, self.index))
+        self.k = mutual / math.sqrt(la * lb)
+        i, j, k = ports
+        self.tag = f'k{i}{j}'
+        self.node_k = f'p{k}' if k else '0'
+        self.node_m = f'{self.tag}_m' if rc > 0 else self.node_k
+
+    @property
+    def name(self):
+        i, j, _ = self.ports
+        return f'p{i}, p{j} - {_node_name(self.node_k)}'
+
+    @property
+    def label(self):
+        return 'coupled coils: ' + ' + '.join(f'CR{c.network.id} {c.network.name}'
+                                              for c in self.coils)
+
+    @property
+    def error_db(self):
+        return _db(self.error)
+
+    def values_text(self):
+        text = ' | '.join(c.format() for c in self.coils) + f' | k={self.k:.4g}'
+        if self.rc > 0:
+            text += f' Rc={format_value(self.rc, "R")}'
+        return text
+
+    def impedances(self, freq):
+        """Z11, Z22, Z12 of the pair, seen from ports i and j against node k."""
+        freq = np.asarray(freq, dtype=float)
+        with np.errstate(all='ignore'):
+            z1, z2 = (1 / c.eval(freq, 0) for c in self.coils)
+        return z1 + self.rc, z2 + self.rc, self.rc + 2j * np.pi * freq * self.mutual
+
+    def stamp(self, y, freq):
+        _stamp_pair(y, self.ports, *self.impedances(freq))
 
     def elements(self):
-        """Chosen elements as (name, kind, node1, node2, value)."""
-        if self.chosen is None or self.chosen.is_open:
-            return []
-        comp = self.chosen.component
-        out = []
-        for (sym, n1, n2), value in zip(comp.network.connections, comp.values[0]):
-            nodes = [self.node1 if n == 1 else self.node2 if n == 0 else f'{self.tag}_n{n}'
-                     for n in (n1, n2)]
-            out.append((f'{sym}_{self.tag}', sym[0], nodes[0], nodes[1], value))
+        i, j, _ = self.ports
+        out, names = [], []
+        for port, comp, n, letter in zip((i, j), self.coils, self.index, 'ab'):
+            part = _component_elements(comp, f'p{port}', self.node_m, self.tag + letter)
+            names.append(part[n][0])
+            out += part
+        if self.rc > 0:
+            out.append((f'Rc_{self.tag}', 'R', self.node_m, self.node_k, self.rc))
+        out.append((f'K_{self.tag}', 'K', names[0], names[1], self.k))
         return out
 
 
 class Model:
-    """The extracted model: branches with their chosen networks."""
+    """The extracted model: branches with their chosen networks, and coupled-coil groups."""
 
-    def __init__(self, nports, z0, branches, freq, s_data, options, source='',
+    def __init__(self, nports, z0, branches, freq, s_data, options, form='pi', source='',
                  reciprocity_error=0.0):
         self.nports, self.z0 = nports, z0
         self.branches = branches
+        self.couplings = []
+        self.form = form
         self.freq, self.s_data = freq, s_data    # fit band
         self.options = options
         self.source = source
@@ -184,14 +316,31 @@ class Model:
         b = self.branches[branch]
         b.chosen = b.candidates[candidate] if isinstance(candidate, int) else candidate
 
+    def free_branches(self):
+        """Branches that are not replaced by a coupled-coil group."""
+        return [b for b in self.branches if b.group is None]
+
+    def rows(self):
+        """Result rows, each a Branch or a Coupled (both have name, error and values)."""
+        return self.free_branches() + self.couplings
+
     def y_matrix(self, freq):
+        if self.form != 'pi':
+            raise ValueError('the tee form has no Y-matrix if a leg is open: use s_matrix')
         freq = np.asarray(freq, dtype=float).ravel()
         y = np.zeros((freq.size, self.nports, self.nports), dtype=complex)
-        for b in self.branches:
+        for b in self.free_branches():
             _stamp(y, b.ports, b.admittance(freq))
+        for c in self.couplings:
+            c.stamp(y, freq)
         return y
 
     def s_matrix(self, freq):
+        freq = np.asarray(freq, dtype=float).ravel()
+        if self.form == 'tee':
+            a, b, c = (br.admittance(freq) for br in self.branches)
+            with np.errstate(all='ignore'):
+                return _tee_s(1 / a, 1 / b, c, self.z0)
         return _y2s(self.y_matrix(freq), self.z0)
 
     def to_network(self, freq=None):
@@ -206,21 +355,48 @@ class Model:
         return _rms(self.s_matrix(self.freq) - self.s_data)
 
     def error_db(self):
-        return 20 * math.log10(max(self.error(), 1e-300))
+        return _db(self.error())
 
     def max_error(self):
         return float(np.abs(self.s_matrix(self.freq) - self.s_data).max())
 
+    def sections(self):
+        """Netlist sections: list of (comment, elements); elements are
+        (name, kind, node1, node2, value), for kind 'K' (inductor1, inductor2, k)."""
+        alias, shorted = {}, []
+        if self.form == 'tee':                   # a shorted leg merges the center node
+            for b in self.branches[:2]:
+                if b.chosen.trivial == 'short':
+                    if 'c' not in alias:
+                        alias['c'] = b.node1
+                    else:
+                        shorted.append((f'Rshort_{b.tag}', 'R', b.node1, alias['c'], SHORT_OHM))
+        out = []
+        for b in self.free_branches():
+            out.append((f'branch {b.name}: {b.chosen.label}, error {b.chosen.error_db:.1f} dB',
+                        b.elements(alias)))
+        if shorted:
+            out.append(('short between the ports', shorted))
+        for c in self.couplings:
+            out.append((f'{c.name}: {c.label}, error {c.error_db:.1f} dB', c.elements()))
+        return out
+
     def elements(self):
-        return [e for b in self.branches for e in b.elements()]
+        return [e for _, part in self.sections() for e in part]
 
     def n_elements(self):
         return len(self.elements())
 
+    def warnings(self):
+        return [b.warning() for b in self.branches if b.warning()]
+
     def to_dict(self):
         """Plain data (JSON-ready) of the result."""
+        def elements(part):
+            return [{'name': n, 'kind': k, 'node1': n1, 'node2': n2, 'value': v}
+                    for n, k, n1, n2, v in part]
         return {
-            'source': self.source, 'ports': self.nports, 'z0': self.z0,
+            'source': self.source, 'ports': self.nports, 'z0': self.z0, 'form': self.form,
             'band_hz': [float(self.freq[0]), float(self.freq[-1])],
             'points': int(self.freq.size),
             'options': dataclasses.asdict(self.options),
@@ -228,24 +404,32 @@ class Model:
             'error_max': self.max_error(), 'reciprocity_error': self.reciprocity_error,
             'branches': [{
                 'name': b.name, 'node1': b.node1, 'node2': b.node2,
-                'network': None if b.chosen.is_open else b.chosen.component.network.name,
-                'id': None if b.chosen.is_open else b.chosen.component.network.id,
+                'network': None if b.chosen.is_trivial else b.chosen.component.network.name,
+                'id': None if b.chosen.is_trivial else b.chosen.component.network.id,
+                'choice': b.chosen.label,
                 'error_rms': b.chosen.error, 'error_db': b.chosen.error_db,
                 'limit_rms': b.limit, 'warning': b.warning(),
-                'elements': [{'name': n, 'kind': k, 'node1': n1, 'node2': n2, 'value': v}
-                             for n, k, n1, n2, v in b.elements()],
-            } for b in self.branches],
+                'elements': elements(b.elements()),
+            } for b in self.free_branches()],
+            'couplings': [{
+                'name': c.name, 'networks': [k.network.name for k in c.coils],
+                'k': c.k, 'mutual': c.mutual, 'rc': c.rc,
+                'error_rms': c.error, 'error_db': c.error_db,
+                'elements': elements(c.elements()),
+            } for c in self.couplings],
         }
 
     def summary(self):
-        """Text table of the branches."""
+        """Text table of the result."""
         lines = []
-        for b in self.branches:
-            c = b.chosen
-            lines.append(f'{b.name:10s} {c.label:20s} {c.error_db:7.1f} dB  {c.values_text()}')
-        lines += ['warning: ' + b.warning() for b in self.branches if b.warning()]
-        lines.append(f'model: {self.n_elements()} elements, S-parameter error '
-                     f'{self.error_db():.1f} dB rms, {20 * math.log10(max(self.max_error(), 1e-300)):.1f} dB max')
+        for r in self.rows():
+            label = r.chosen.label if isinstance(r, Branch) else r.label
+            err = r.chosen.error_db if isinstance(r, Branch) else r.error_db
+            text = r.chosen.values_text() if isinstance(r, Branch) else r.values_text()
+            lines.append(f'{r.name:10s} {label:20s} {err:7.1f} dB  {text}')
+        lines += ['warning: ' + w for w in self.warnings()]
+        lines.append(f'model ({self.form} form): {self.n_elements()} elements, S-parameter '
+                     f'error {self.error_db():.1f} dB rms, {_db(self.max_error()):.1f} dB max')
         return '\n'.join(lines)
 
 
@@ -261,6 +445,20 @@ def _y2s(y, z0):
     return np.einsum('fij,fjk->fik', eye - z0 * y, np.linalg.inv(eye + z0 * y))
 
 
+def _tee_s(za, zb, yc, z0):
+    """S-parameters of a tee: series za, shunt yc, series zb (ABCD chain, so a shorted leg
+    and an open center are allowed)."""
+    a = 1 + za * yc
+    b = za + zb + za * zb * yc
+    d = 1 + zb * yc
+    den = a + b / z0 + yc * z0 + d
+    s = np.empty((np.size(den), 2, 2), dtype=complex)
+    s[:, 0, 0] = (a + b / z0 - yc * z0 - d) / den
+    s[:, 1, 1] = (-a + b / z0 - yc * z0 + d) / den
+    s[:, 0, 1] = s[:, 1, 0] = 2 / den
+    return s
+
+
 def _stamp(y, ports, yb):
     """Add branch admittance yb (per frequency) to the Y-matrices y."""
     if len(ports) == 1:
@@ -272,6 +470,25 @@ def _stamp(y, ports, yb):
         y[:, j, j] += yb
         y[:, i, j] -= yb
         y[:, j, i] -= yb
+
+
+def _pair_ports(ports):
+    """Pi branches of the triangle i, j, k (k = 0: ground): (i-j, i-k, j-k)."""
+    i, j, k = ports
+    return (tuple(sorted((i, j))), tuple(sorted((i, k))) if k else (i,),
+            tuple(sorted((j, k))) if k else (j,))
+
+
+def _pair_admittances(z11, z22, z12):
+    """Branch admittances (i-j, i-k, j-k) of a coupled pair given by its impedances."""
+    det = z11 * z22 - z12 * z12
+    return z12 / det, (z22 - z12) / det, (z11 - z12) / det
+
+
+def _stamp_pair(y, ports, z11, z22, z12):
+    with np.errstate(all='ignore'):
+        for p, yb in zip(_pair_ports(ports), _pair_admittances(z11, z22, z12)):
+            _stamp(y, p, yb)
 
 
 def branch_admittances(y):
@@ -300,11 +517,15 @@ def _acceptable(comp, sol, require):
 
 
 class _BranchSearch:
-    """Candidates of one branch, synthesized only as far as the choice needs."""
+    """Candidates of one branch, synthesized only as far as the choice needs.
 
-    def __init__(self, branch, y_sym, s_ref, z0, cat, opt, tick):
+    ``s_error(yb)``: RMS |S difference| when admittance yb replaces the branch in the data.
+    ``accept(component)``: extra condition on a candidate (default: none).
+    """
+
+    def __init__(self, branch, s_error, cat, opt, tick, accept=None):
         self.b, self.opt, self.tick = branch, opt, tick
-        self.y_sym, self.s_ref, self.z0 = y_sym, s_ref, z0
+        self.error_of, self.accept = s_error, accept
         self.done = {}                           # network id -> list of Candidate
         nets = [n for n in cat if n.can_synthesize and not n.fixed
                 and len(n.symVn) <= opt.max_elements]
@@ -320,18 +541,21 @@ class _BranchSearch:
             if r.ok:
                 self.sig_error[sig] = self.s_error(evaluate(r.a, r.b, branch.freq, opt.dps))
             tick()
-        self.open = Candidate(None, self.s_error(np.zeros_like(branch.y)), _rms(branch.y))
+        self.trivial = None
+        if branch.trivial == 'open':
+            self.trivial = Candidate(None, self.s_error(np.zeros_like(branch.y)),
+                                     _rms(branch.y), 'open')
+        elif branch.trivial == 'short':
+            self.trivial = Candidate(None, self.s_error(np.full_like(branch.y, np.inf)),
+                                     math.inf, 'short')
 
     def s_error(self, yb):
-        """RMS |S difference| when yb replaces the branch admittance in the data."""
-        if not np.all(np.isfinite(yb)):
-            return math.inf
-        y = self.y_sym.copy()
-        _stamp(y, self.b.ports, yb - self.b.y)
-        try:
-            return _rms(_y2s(y, self.z0) - self.s_ref)
-        except np.linalg.LinAlgError:
-            return math.inf
+        with np.errstate(all='ignore'):
+            try:
+                e = self.error_of(yb)
+            except np.linalg.LinAlgError:
+                return math.inf
+        return e if math.isfinite(e) else math.inf
 
     def candidates(self, net):
         if net.id not in self.done:
@@ -345,37 +569,42 @@ class _BranchSearch:
                 errs = None
             if errs is not None:
                 for sol in range(len(comp.values)):
-                    if _acceptable(comp, sol, self.opt.require):
-                        c = Component(net, values=comp.values[sol])
+                    if not _acceptable(comp, sol, self.opt.require):
+                        continue
+                    c = Component(net, values=comp.values[sol])
+                    if self.accept is None or self.accept(c):
                         out.append(Candidate(c, self.s_error(c.eval(self.b.freq, 0)), errs[sol]))
             self.done[net.id] = out
         return self.done[net.id]
 
     def run(self):
+        """Choose; returns the chosen Candidate (None if there is no candidate at all)."""
         opt = self.opt
-        target = 10 ** (opt.target_db / 20)
         order = sorted(self.sig_error, key=self.sig_error.get)
         if opt.full_search:
             for sig in order:
                 for net in self.sigs[sig]:
                     self.candidates(net)
         # lowest error: signatures in order of error until one has a candidate
-        best = self.open
+        best, found_any = self.trivial, False
         for sig in order:
-            if self.sig_error[sig] >= best.error and best is not self.open:
+            if found_any and self.sig_error[sig] >= best.error:
                 break
             found = [c for net in self.sigs[sig] for c in self.candidates(net)]
             if found:
-                best = min(found + [best], key=lambda c: c.error)
+                found_any = True
+                best = min(found + ([best] if best is not None else []), key=lambda c: c.error)
+        if best is None:
+            return None
         if opt.pick == 'simplest':
-            limit = max(target, opt.tolerance * best.error)
+            limit = max(opt.target, opt.tolerance * best.error)
         else:
             # lowest error; among practically equal errors the fewest elements, so that
             # exact data do not give a larger network with meaningless extra elements
             limit = 1.01 * best.error + EQUAL_ERROR
         chosen = best
-        if self.open.error <= limit:
-            chosen = self.open
+        if self.trivial is not None and self.trivial.error <= limit:
+            chosen = self.trivial
         else:
             # networks that can reach the limit, fewest elements first
             nets = [n for sig in order if self.sig_error[sig] <= limit
@@ -386,13 +615,203 @@ class _BranchSearch:
                 if found:
                     chosen = min(found, key=lambda c: c.error)
                     break
-        allc = [c for cs in self.done.values() for c in cs] + [self.open]
+        allc = [c for cs in self.done.values() for c in cs]
+        if self.trivial is not None:
+            allc.append(self.trivial)
         allc.sort(key=lambda c: (c.error > limit, c.n_elements if c.error <= limit else 0,
                                  c.error))
         self.b.candidates = [chosen] + [c for c in allc if c is not chosen]
         self.b.chosen = chosen
         self.b.limit = limit
-        self.b.target = target
+        self.b.target = opt.target
+        return chosen
+
+
+# --- the forms --------------------------------------------------------------------------
+
+class _Data:
+    """The data in the fit band and what the searches need."""
+
+    def __init__(self, f, y_sym, s_data, z0, cat, opt, tick):
+        self.f, self.y, self.s_data, self.z0 = f, y_sym, s_data, z0
+        self.s_ref = _y2s(y_sym, z0)
+        self.cat, self.opt, self.tick = cat, opt, tick
+        self.nports = y_sym.shape[-1]
+
+    def y_error(self, y):
+        return _rms(_y2s(y, self.z0) - self.s_ref)
+
+
+def _extract_pi(d):
+    yb = branch_admittances(d.y)
+    branches = []
+    for ports in yb:
+        node2 = f'p{ports[1]}' if len(ports) == 2 else '0'
+        branches.append(Branch(f'p{ports[0]}', node2, 'p' + 'p'.join(str(p) for p in ports),
+                               d.f, yb[ports], 'open', ports))
+    for b in branches:
+        def s_error(ycand, b=b):
+            y = d.y.copy()
+            _stamp(y, b.ports, ycand - b.y)
+            return d.y_error(y)
+        _BranchSearch(b, s_error, d.cat, d.opt, lambda b=b: d.tick(f'branch {b.name}')).run()
+    return Model(d.nports, d.z0, branches, d.f, d.s_data, d.opt, 'pi')
+
+
+def _extract_tee(d):
+    """Tee form of a 2-port, or None if the data have no Z-matrix."""
+    try:
+        with np.errstate(all='ignore'):
+            z = np.linalg.inv(d.y)
+            legs = [1 / (z[:, 0, 0] - z[:, 0, 1]), 1 / (z[:, 1, 1] - z[:, 0, 1]), 1 / z[:, 0, 1]]
+    except np.linalg.LinAlgError:
+        return None
+    if not all(np.all(np.isfinite(v)) for v in legs):
+        return None
+    branches = [Branch('p1', 'c', 'p1c', d.f, legs[0], 'short'),
+                Branch('p2', 'c', 'p2c', d.f, legs[1], 'short'),
+                Branch('c', '0', 'c', d.f, legs[2], 'open')]
+    for k, b in enumerate(branches):
+        def s_error(ycand, k=k):
+            v = list(legs)
+            v[k] = ycand
+            return _rms(_tee_s(1 / v[0], 1 / v[1], v[2], d.z0) - d.s_ref)
+        _BranchSearch(b, s_error, d.cat, d.opt,
+                      lambda b=b: d.tick(f'tee form, branch {b.name}')).run()
+    return Model(2, d.z0, branches, d.f, d.s_data, d.opt, 'tee')
+
+
+def _has_inductor(branch):
+    c = branch.chosen
+    return (c is not None and not c.is_trivial
+            and any(sym[0] == 'L' for sym in c.component.network.symVn))
+
+
+def _try_coupling(d, model, ports):
+    """Coupled coils for the triangle ports = (i, j, k).
+
+    The branches i-k and j-k become the coils. What the coils and their coupling do not
+    explain of the branch i-j (the capacitance between the coil ends, typically) stays a
+    branch of its own. Returns (Coupled, that branch, error of the three) or None.
+    """
+    opt = d.opt
+    by_ports = {b.ports: b for b in model.branches}
+    tri = [by_ports[p] for p in _pair_ports(ports)]
+    yij, yik, yjk = (b.y for b in tri)
+    i, j, _ = ports
+    tag = f'k{i}{j}'
+    w = 2 * np.pi * d.f
+    low = d.f <= d.f[0] + (d.f[-1] - d.f[0]) / 3     # where the coils are inductive
+
+    def error(z1, z2, rc, mutual, y_rest):
+        """RMS |S difference| when the three data branches are replaced by the pair
+        (coil impedances z1, z2) and the branch y_rest between i and j."""
+        y = d.y.copy()
+        for t in tri:
+            _stamp(y, t.ports, -t.y)
+        _stamp_pair(y, ports, z1 + rc, z2 + rc, rc + 1j * w * mutual)
+        _stamp(y, tri[0].ports, y_rest)
+        return d.y_error(y)
+
+    def fit(use_rc):
+        y_rest = np.zeros_like(yij)
+        result = None
+        for _ in range(2):                       # second pass: coils without the rest branch
+            with np.errstate(all='ignore'):
+                yc = yij - y_rest
+                det = (yik + yc) * (yjk + yc) - yc * yc
+                z11, z22, z12 = (yjk + yc) / det, (yik + yc) / det, yc / det
+            if not all(np.all(np.isfinite(v)) for v in (z11, z22, z12)):
+                return result
+            # Coupling and common resistor: start from the low band, where the coils are
+            # inductive, then take the values with the lowest S-parameter error (the
+            # apparent mutual inductance grows towards the resonance).
+            m0 = float(np.mean(z12.imag[low] / w[low]))
+            r0 = max(float(np.mean(z12.real[low])), 0.0)
+            if m0 == 0 or (use_rc and r0 == 0):
+                return result
+            m_grid = m0 * np.linspace(0.6, 1.6, 21)
+            r_grid = r0 * np.linspace(0.0, 3.0, 13) if use_rc else np.zeros(1)
+            for _ in range(8):                   # coarse grid, then finer ones around it
+                _, mutual, rc = min(
+                    ((error(z11 - r, z22 - r, r, m, y_rest), m, r)
+                     for m in m_grid for r in r_grid), key=lambda t: t[0])
+                dm = abs(m_grid[1] - m_grid[0])
+                dr = max(r_grid[1:] - r_grid[:-1]) if use_rc else 0
+                m_grid = mutual + dm * np.linspace(-1, 1, 11)
+                r_grid = np.maximum(rc + dr * np.linspace(-1, 1, 11), 0) if use_rc else r_grid
+            mutual, rc = float(mutual), float(rc)
+            coils, z_model = [], [z11 - rc, z22 - rc]
+            for n, port in enumerate((i, j)):
+                coil = Branch(f'p{port}', 'm', tag + 'ab'[n], d.f, 1 / z_model[n], None)
+
+                def s_error(ycand, n=n):
+                    z = list(z_model)
+                    z[n] = 1 / ycand
+                    return error(z[0], z[1], rc, mutual, y_rest)
+                c = _BranchSearch(coil, s_error, d.cat, opt,
+                                  lambda: d.tick(f'coupled coils {tag}'),
+                                  accept=lambda comp: series_inductor(comp) is not None).run()
+                if c is None:
+                    return result
+                coils.append(c.component)
+                with np.errstate(all='ignore'):
+                    z_model[n] = 1 / c.component.eval(d.f, 0)
+            g = Coupled(ports, coils, rc, mutual, 0.0)
+            if abs(g.k) > K_MAX:
+                return result
+            # the rest of the branch between the two ports
+            y_pair = _pair_admittances(z_model[0] + rc, z_model[1] + rc, rc + 1j * w * mutual)[0]
+            rest = Branch(tri[0].node1, tri[0].node2, tri[0].tag, d.f, yij - y_pair, 'open',
+                          tri[0].ports)
+            chosen = _BranchSearch(
+                rest, lambda ycand: error(z_model[0], z_model[1], rc, mutual, ycand),
+                d.cat, opt, lambda: d.tick(f'branch {rest.name} beside coupled coils')).run()
+            g.error = chosen.error
+            if result is None or g.error < result[2]:
+                result = (g, rest, g.error)
+            y_rest = rest.admittance(d.f)
+        return result
+
+    best = fit(False)                            # without the common resistor first
+    if best is None or best[2] > opt.target or opt.pick == 'best':
+        with_rc = fit(True)
+        if with_rc is not None and (best is None or with_rc[2] * opt.tolerance < best[2] - EQUAL_ERROR):
+            best = with_rc
+    return best
+
+
+def _add_couplings(d, model):
+    """Replace triangles around a failing branch between two ports by coupled coils."""
+    for b in list(model.branches):
+        if b not in model.branches or len(b.ports) != 2 or b.group is not None:
+            continue
+        if not (b.target_missed or b.has_negative_element()):
+            continue
+        i, j = b.ports
+        by_ports = {x.ports: x for x in model.branches}
+        best = None
+        for k in [0] + [p for p in range(1, model.nports + 1) if p not in (i, j)]:
+            tri = [by_ports[p] for p in _pair_ports((i, j, k))]
+            if any(t.group is not None for t in tri) or not all(map(_has_inductor, tri[1:])):
+                continue
+            y = d.y.copy()                       # error of the three branches as chosen
+            for t in tri:
+                _stamp(y, t.ports, t.admittance(d.f) - t.y)
+            before = d.y_error(y)
+            r = _try_coupling(d, model, (i, j, k))
+            if r is not None and r[2] < before and (best is None or r[2] < best[2]):
+                best = r
+        if best is not None:
+            g, rest, _ = best
+            model.couplings.append(g)
+            model.branches[model.branches.index(b)] = rest
+            for t in (by_ports[p] for p in _pair_ports(g.ports)[1:]):
+                t.group = g
+
+
+def _missed(model):
+    return bool(model.warnings())
 
 
 def extract(network, options=None, catalog=None, progress=None, cancel=None):
@@ -408,6 +827,8 @@ def extract(network, options=None, catalog=None, progress=None, cancel=None):
         source = str(network)
         from . import data
         network = data.read(network)
+    if opt.form == 'tee' and network.nports != 2:
+        raise ValueError('the tee form is for 2-port data only')
     cat = catalog or _catalog.load('base')
     f = network.f.astype(float)
     keep = f > 0
@@ -425,43 +846,51 @@ def extract(network, options=None, catalog=None, progress=None, cancel=None):
     y = network.y[keep]
     y_sym = (y + np.transpose(y, (0, 2, 1))) / 2
     s_data = network.s[keep]
-    s_ref = _y2s(y_sym, z0)
-    recip = _rms(s_ref - s_data)
-    yb = branch_admittances(y_sym)
-    branches = [Branch(ports, f, yb[ports]) for ports in yb]
 
-    nsig = len({n.flag_sig for n in cat if n.can_synthesize})
-    state = {'k': 0, 'branch': 0}
-    total = len(branches) * (nsig + 60)          # rough number of steps, for the bar
+    n = network.nports
+    nsig = len({m.flag_sig for m in cat if m.can_synthesize})
+    total = 2 * (n * (n + 1) // 2) * (nsig + 60)     # rough number of steps, for the bar
+    count = [0]
 
-    def tick():
+    def tick(text=''):
         if cancel is not None and cancel():
             raise Cancelled()
-        state['k'] += 1
+        count[0] += 1
         if progress is not None:
-            b = branches[state['branch']]
-            progress(min(state['k'] / total, 0.99), f'branch {b.name}')
+            progress(min(count[0] / total, 0.99), text)
 
-    for k, b in enumerate(branches):
-        state['branch'] = k
-        state['k'] = max(state['k'], k * (nsig + 60))
-        _BranchSearch(b, y_sym, s_ref, z0, cat, opt, tick).run()
+    d = _Data(f, y_sym, s_data, z0, cat, opt, tick)
+    model = None
+    if opt.form in ('auto', 'pi'):
+        model = _extract_pi(d)
+        if opt.coupling:
+            _add_couplings(d, model)
+    if opt.form == 'tee' or (opt.form == 'auto' and n == 2 and _missed(model)):
+        tee = _extract_tee(d)
+        if model is None:
+            if tee is None:
+                raise ValueError('the data have no Z-matrix: the tee form cannot be used')
+            model = tee
+        elif tee is not None and tee.error() < model.error():
+            model = tee
+    model.source = source
+    model.reciprocity_error = _rms(d.s_ref - s_data)
     if progress is not None:
         progress(1.0, 'done')
-    return Model(network.nports, z0, branches, f, s_data, opt, source, recip)
+    return model
 
 
 def describe(model):
-    """Lines for a report: data, options, branches, total error."""
+    """Lines for a report: data, options, result, total error."""
     o = model.options
     lines = [f'data: {model.source or "network"}, {model.nports} port(s), '
              f'fit band {model.freq[0] / 1e9:.6g} to {model.freq[-1] / 1e9:.6g} GHz, '
              f'{model.freq.size} points',
              f'choice: {o.pick}, elements {o.require}, limit {o.target_db:g} dB or '
-             f'{o.tolerance:g} x lowest error, up to {o.max_elements} elements per branch']
+             f'{o.tolerance:g} x lowest error, up to {o.max_elements} elements per branch, '
+             f'form {o.form}, coupled coils {"on" if o.coupling else "off"}']
     if model.reciprocity_error > 1e-6:
         lines.append(f'data are not reciprocal: RMS |S - S^T|/2 = '
-                     f'{20 * math.log10(model.reciprocity_error):.1f} dB (the model is reciprocal)')
+                     f'{_db(model.reciprocity_error):.1f} dB (the model is reciprocal)')
     lines.append(model.summary())
     return lines
-
