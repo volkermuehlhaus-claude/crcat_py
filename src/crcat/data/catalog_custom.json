@@ -1,0 +1,788 @@
+{
+ "source": {
+  "repository": "https://github.com/Sonnet-Software/CRCat",
+  "commit": "c805a25a4fcdaf21e67510b5a9351240d87afd63",
+  "file": "@CRCat/Catalogs/ACustomCatalog.mat"
+ },
+ "converter": "tools/convert_mat.py 0.1",
+ "units": {
+  "fUnit": "GHz",
+  "resUnit": "\u03a9",
+  "indUnit": "nH",
+  "capUnit": "nF",
+  "fMult": 1000000000.0
+ },
+ "networks": [
+  {
+   "id": 1,
+   "name": "XXXII-39_original",
+   "symV": [
+    "La",
+    "Lb",
+    "Rc",
+    "Ld",
+    "Cd"
+   ],
+   "symVn": [
+    "La",
+    "Lb",
+    "Rc",
+    "Ld",
+    "Cd"
+   ],
+   "symC": [
+    "a3",
+    "a2",
+    "a1",
+    "a0",
+    "b4",
+    "b3",
+    "b2",
+    "b1"
+   ],
+   "A": "Rc + Lb*s + Ld*s + Cd*Lb*Ld*s**3 + Cd*Ld*Rc*s**2",
+   "B": "s*(La*Rc + Lb*Rc + La*Lb*s + La*Ld*s + Lb*Ld*s + Cd*La*Lb*Ld*s**3 + Cd*La*Ld*Rc*s**2 + Cd*Lb*Ld*Rc*s**2)",
+   "EL": {
+    "rows": [
+     [
+      "a0**(-2)*a3**(-1)*(a0*a2*b2 + a0*a3*b1 - a1*a2*b1)",
+      "-a0**(-2)*a2*a3**(-1)*(a0*b2 - a1*b1)",
+      "-a0**(-2)*a2**2*a3**(-2)*(a0*b2 - a1*b1)",
+      "a0**(-3)*a2*a3**(-2)*(a0*a3 - a1*a2)*(a0*b2 - a1*b1)",
+      "a0**2*a3**2*(a0*a3 - a1*a2)**(-1)*(a0*b2 - a1*b1)**(-1)"
+     ]
+    ]
+   },
+   "testEL": [
+    4.3,
+    13.0,
+    5.4,
+    27.0,
+    0.092
+   ],
+   "flagSig": "1111-11110",
+   "nodes": [
+    1,
+    2,
+    2,
+    0,
+    2,
+    3,
+    3,
+    0,
+    3,
+    0
+   ],
+   "same": [
+    {
+     "to": 1,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "Rc",
+       "Ld",
+       "Cd"
+      ]
+     ]
+    },
+    {
+     "to": 2,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "Rc",
+       "Ld",
+       "Cd"
+      ]
+     ]
+    },
+    {
+     "to": 3,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "Rc",
+       "Ld",
+       "Cd"
+      ]
+     ]
+    },
+    {
+     "to": 4,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "Rc",
+       "Ld",
+       "Cd"
+      ]
+     ]
+    },
+    {
+     "to": 5,
+     "status": "NoXfrm"
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "name": "XXXII-39_FixedCdd",
+   "symV": [
+    "La",
+    "Lb",
+    "Rc",
+    "Ld"
+   ],
+   "symVn": [
+    "La",
+    "Lb",
+    "Rc",
+    "Ld",
+    "Cdd"
+   ],
+   "symC": [
+    "a3",
+    "a2",
+    "a1",
+    "a0",
+    "b4",
+    "b3",
+    "b2",
+    "b1"
+   ],
+   "A": "Rc + Lb*s + Ld*s + Cdd*Lb*Ld*s**3 + Cdd*Ld*Rc*s**2",
+   "B": "s*(La*Rc + Lb*Rc + La*Lb*s + La*Ld*s + Lb*Ld*s + Cdd*La*Lb*Ld*s**3 + Cdd*La*Ld*Rc*s**2 + Cdd*Lb*Ld*Rc*s**2)",
+   "EL": {
+    "rows": [
+     [
+      "Cdd**(-1)*a0**(-1)*(a0*a3 - a1*a2)**(-1)*(a0*a2*a3 + Cdd*a0*a3*b1 - Cdd*a1*a2*b1)",
+      "-Cdd**(-1)*a2*a3*(a0*a3 - a1*a2)**(-1)",
+      "-Cdd**(-1)*a2**2*(a0*a3 - a1*a2)**(-1)",
+      "Cdd**(-1)*a0**(-1)*a2"
+     ]
+    ]
+   },
+   "testEL": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    0.05
+   ],
+   "flagSig": "1111-11110",
+   "nodes": [
+    1,
+    2,
+    2,
+    0,
+    2,
+    3,
+    3,
+    0,
+    3,
+    0
+   ],
+   "same": [
+    {
+     "to": 1,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "Rc",
+       "Ld",
+       "Cdd"
+      ]
+     ]
+    },
+    {
+     "to": 2,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "Rc",
+       "Ld",
+       "Cdd"
+      ]
+     ]
+    },
+    {
+     "to": 3,
+     "status": "NoXfrm"
+    },
+    {
+     "to": 4,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "Rc",
+       "Ld",
+       "Cdd"
+      ]
+     ]
+    },
+    {
+     "to": 5,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "Rc",
+       "Ld",
+       "Cdd"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "name": "XXXII-39_FixedCdd2",
+   "symV": [
+    "La",
+    "Lb",
+    "Rc",
+    "Ld"
+   ],
+   "symVn": [
+    "La",
+    "Lb",
+    "Rc",
+    "Cdd",
+    "Ld"
+   ],
+   "symC": [
+    "a3",
+    "a2",
+    "a1",
+    "a0",
+    "b4",
+    "b3",
+    "b2",
+    "b1"
+   ],
+   "A": "Rc + Lb*s + Ld*s + Cdd*Lb*Ld*s**3 + Cdd*Ld*Rc*s**2",
+   "B": "s*(La*Rc + Lb*Rc + La*Lb*s + La*Ld*s + Lb*Ld*s + Cdd*La*Lb*Ld*s**3 + Cdd*La*Ld*Rc*s**2 + Cdd*Lb*Ld*Rc*s**2)",
+   "EL": {
+    "rows": [
+     [
+      "Cdd**(-1)*a0**(-1)*(a0*a3 - a1*a2)**(-1)*(a0*a2*a3 + Cdd*a0*a3*b1 - Cdd*a1*a2*b1)",
+      "-Cdd**(-1)*a2*a3*(a0*a3 - a1*a2)**(-1)",
+      "-Cdd**(-1)*a2**2*(a0*a3 - a1*a2)**(-1)",
+      "Cdd**(-1)*a0**(-1)*a2"
+     ]
+    ]
+   },
+   "testEL": [
+    1.0,
+    2.0,
+    3.0,
+    0.04,
+    5.0
+   ],
+   "flagSig": "1111-11110",
+   "nodes": [
+    1,
+    2,
+    2,
+    0,
+    2,
+    3,
+    3,
+    0,
+    3,
+    0
+   ],
+   "same": [
+    {
+     "to": 1,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "Rc",
+       "Ld",
+       "Cdd"
+      ]
+     ]
+    },
+    {
+     "to": 2,
+     "status": "NoXfrm"
+    },
+    {
+     "to": 3,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "Rc",
+       "Cdd",
+       "Ld"
+      ]
+     ]
+    },
+    {
+     "to": 4,
+     "status": "NoXfrm"
+    },
+    {
+     "to": 5,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "Rc",
+       "Ld",
+       "Cdd"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": 4,
+   "name": "XXXII-39_FixedLdCdd",
+   "symV": [
+    "La",
+    "Lb",
+    "Rc"
+   ],
+   "symVn": [
+    "La",
+    "Lb",
+    "Rc",
+    "Ldd",
+    "Cdd"
+   ],
+   "symC": [
+    "a3",
+    "a2",
+    "a1",
+    "a0",
+    "b4",
+    "b3",
+    "b2",
+    "b1"
+   ],
+   "A": "Rc + Lb*s + Ldd*s + Cdd*Lb*Ldd*s**3 + Cdd*Ldd*Rc*s**2",
+   "B": "s*(La*Rc + Lb*Rc + La*Lb*s + La*Ldd*s + Lb*Ldd*s + Cdd*La*Lb*Ldd*s**3 + Cdd*La*Ldd*Rc*s**2 + Cdd*Lb*Ldd*Rc*s**2)",
+   "EL": {
+    "rows": [
+     [
+      "a3**(-1)*b4",
+      "-a0**(-1)*a3**(-1)*(a0*b4 - a3*b1)",
+      "-Cdd*Ldd*a3**(-2)*(a0*b4 - a3*b1)"
+     ]
+    ]
+   },
+   "testEL": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    0.05
+   ],
+   "flagSig": "1111-11110",
+   "nodes": [
+    1,
+    2,
+    2,
+    0,
+    2,
+    3,
+    3,
+    0,
+    3,
+    0
+   ],
+   "same": [
+    {
+     "to": 1,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "Rc",
+       "Ldd",
+       "Cdd"
+      ]
+     ]
+    },
+    {
+     "to": 2,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "Rc",
+       "Ldd",
+       "Cdd"
+      ]
+     ]
+    },
+    {
+     "to": 3,
+     "status": "NoXfrm"
+    },
+    {
+     "to": 4,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "Rc",
+       "Ldd",
+       "Cdd"
+      ]
+     ]
+    },
+    {
+     "to": 5,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "Rc",
+       "Ldd",
+       "Cdd"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": 5,
+   "name": "XXXII-39_FixedLbRca",
+   "symV": [
+    "La",
+    "Ld",
+    "Cd"
+   ],
+   "symVn": [
+    "La",
+    "Lbb",
+    "Rcc",
+    "Ld",
+    "Cd"
+   ],
+   "symC": [
+    "a3",
+    "a2",
+    "a1",
+    "a0",
+    "b4",
+    "b3",
+    "b2",
+    "b1"
+   ],
+   "A": "Rcc + Lbb*s + Ld*s + Cd*Lbb*Ld*s**3 + Cd*Ld*Rcc*s**2",
+   "B": "s*(La*Rcc + Lbb*Rcc + La*Lbb*s + La*Ld*s + Lbb*Ld*s + Cd*La*Lbb*Ld*s**3 + Cd*La*Ld*Rcc*s**2 + Cd*Lbb*Ld*Rcc*s**2)",
+   "EL": {
+    "rows": [
+     [
+      "a0**(-1)*(b1 - Lbb*a0)",
+      "-a0**(-1)*(Lbb*a0 - Rcc*a1)",
+      "-a2*(Lbb*a0 - Rcc*a1)**(-1)"
+     ]
+    ]
+   },
+   "testEL": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    0.05
+   ],
+   "flagSig": "1111-11110",
+   "nodes": [
+    1,
+    2,
+    2,
+    0,
+    2,
+    3,
+    3,
+    0,
+    3,
+    0
+   ],
+   "same": [
+    {
+     "to": 1,
+     "rows": [
+      [
+       "La",
+       "Lbb",
+       "Rcc",
+       "Ld",
+       "Cd"
+      ]
+     ]
+    },
+    {
+     "to": 2,
+     "rows": [
+      [
+       "La",
+       "Lbb",
+       "Rcc",
+       "Ld",
+       "Cd"
+      ]
+     ]
+    },
+    {
+     "to": 3,
+     "status": "NoXfrm"
+    },
+    {
+     "to": 4,
+     "rows": [
+      [
+       "La",
+       "Lbb",
+       "Rcc",
+       "Ld",
+       "Cd"
+      ]
+     ]
+    },
+    {
+     "to": 5,
+     "rows": [
+      [
+       "La",
+       "Lbb",
+       "Rcc",
+       "Ld",
+       "Cd"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": 6,
+   "name": "R-LC-Original",
+   "symV": [
+    "La",
+    "Lb",
+    "R"
+   ],
+   "symVn": [
+    "La",
+    "Lb",
+    "R"
+   ],
+   "symC": [
+    "a1",
+    "a0",
+    "b2",
+    "b1"
+   ],
+   "A": "R + Lb*s",
+   "B": "s*(La*R + Lb*R + La*Lb*s)",
+   "EL": {
+    "rows": [
+     [
+      "a1**(-1)*b2",
+      "-a0**(-1)*a1**(-1)*(a0*b2 - a1*b1)",
+      "-a1**(-2)*(a0*b2 - a1*b1)"
+     ]
+    ]
+   },
+   "testEL": [
+    0.1,
+    0.2,
+    3.0
+   ],
+   "flagSig": "11-110",
+   "nodes": [
+    1,
+    2,
+    2,
+    0,
+    2,
+    0
+   ],
+   "same": [
+    {
+     "to": 6,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "R"
+      ]
+     ]
+    },
+    {
+     "to": 7,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "R"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": 7,
+   "name": "R-LC-Cfixed",
+   "symV": [
+    "La",
+    "Lb"
+   ],
+   "symVn": [
+    "La",
+    "Lb",
+    "R"
+   ],
+   "symC": [
+    "a1",
+    "a0",
+    "b2",
+    "b1"
+   ],
+   "A": "R + Lb*s",
+   "B": "s*(La*R + Lb*R + La*Lb*s)",
+   "EL": {
+    "rows": [
+     [
+      "a0**(-1)*(b1 - R*a1)",
+      "R*a0**(-1)*a1"
+     ]
+    ]
+   },
+   "testEL": [
+    0.1,
+    0.2,
+    3.0
+   ],
+   "flagSig": "11-110",
+   "nodes": [
+    1,
+    2,
+    2,
+    0,
+    2,
+    0
+   ],
+   "same": [
+    {
+     "to": 6,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "R"
+      ]
+     ]
+    },
+    {
+     "to": 7,
+     "rows": [
+      [
+       "La",
+       "Lb",
+       "R"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": 8,
+   "name": "FrontHalfModel",
+   "symV": [
+    "Ra",
+    "Ca",
+    "Cb",
+    "Ld",
+    "Rd"
+   ],
+   "symVn": [
+    "Ra",
+    "Ca",
+    "Cb",
+    "Ld",
+    "Rd"
+   ],
+   "symC": [
+    "a3",
+    "a2",
+    "a1",
+    "a0",
+    "b2",
+    "b1",
+    "b0"
+   ],
+   "A": "Ca*Ra*s + Cb*Ra*s + Cb*Rd*s + Cb*Ld*s**2 + Ca*Cb*Ld*Ra*s**3 + Ca*Cb*Ra*Rd*s**2 + 1",
+   "B": "(Rd + Ld*s)*(Ca*Ra*s + Cb*Ra*s + 1)",
+   "EL": {
+    "rows": [
+     [
+      "-(-a0*a2*b1 + a0*a3*b0 + a1*a2*b0)**(-2)*(a2**3*b0**3 - a0**3*a2**2*b0*t1 + a1*a2*a3*b0**3 + a0*a2**2*b0*b1**2 - a1*a2**2*b0**2*b1 + a0**4*a3*b1*t1 - a0*a1*a2**2*b0**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) - a2*a3*a0**2*b0**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) - a0**3*a1*a2*b1*t1 + b0*b1*a0**2*a2**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) + a0**2*a1**2*a2*b0*t1 + a0*a2*a3*b0**2*b1*(-2))",
+      "-b0**(-2)*(a2**3*b0**3 + a0**2*a3*b1**3 - a0*a1*a2*b1**3 + a0*a2**2*b0*b1**2 + a1*a2**2*b0**2*b1*(-2) + a1**2*a2*b0*b1**2)**(-1)*(a1*a2**3*b0**4 - a3*a0**4*b1**3*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) - a1**2*a2**2*b0**3*b1 + a0**5*a3*b1**2*t2 + a0*a2**2*a3*b0**4 - a0*a2**3*b0**3*b1 - a0**3*a1*a2**2*b0**2*t2 + a1*a2*a0**3*b1**3*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) + a0*a1*a2**2*b0**2*b1**2 - a0**2*a2*a3*b0**2*b1**2 - a0*a1**2*a2**2*b0**3*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) - a0**4*a1*a2*b1**2*t2 - b0*a0**3*a2**2*b1**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) + a0**4*a2**2*b0*b1*t2 + a1*b1*a0**2*a2**2*b0**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1)*2 + a2*b0*a0**2*a1**2*b1**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1)*(-2) + a0**3*a1**2*a2*b0*b1*t2 + a0*a2*b1*a1**3*b0**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) + a1*a3*b0*a0**3*b1**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1) + a2*a3*b1*a0**3*b0**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1))",
+      "b0**(-2)*(-a0*b1 + a1*b0 + a0**2*root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1))",
+      "root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1)",
+      "a0**(-1)*b0"
+     ]
+    ],
+    "let": [
+     [
+      "t1",
+      "root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1)**2"
+     ],
+     [
+      "t2",
+      "root([1, (-a0*b1 + a1*b0)/a0**2, -a2*b0**2/a0**3, a3*b0**3/a0**4], 1)**2"
+     ]
+    ]
+   },
+   "testEL": [
+    10.0,
+    0.02,
+    0.03,
+    0.4,
+    5.0
+   ],
+   "flagSig": "1111-111",
+   "nodes": [
+    2,
+    0,
+    2,
+    0,
+    1,
+    2,
+    1,
+    3,
+    3,
+    0
+   ],
+   "same": [
+    {
+     "to": 8,
+     "rows": [
+      [
+       "Ra",
+       "Ca",
+       "Cb",
+       "Ld",
+       "Rd"
+      ]
+     ]
+    }
+   ]
+  }
+ ]
+}

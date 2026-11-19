@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crcat"
+dynamic = ["version"]
+description = "Python port of CRCat: rational-polynomial fitting and the catalog of all RLC networks with up to five elements"
+authors = [
+    { name = "Volker Muehlhaus", email = "volker@muehlhaus.com" }
+]
+license = "MIT"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "mpmath",
+    "numpy",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "sympy", "mat-io"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+crcat = ["data/*.json"]
+
+[tool.setuptools.dynamic]
+version = {attr = "crcat.__version__"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: full catalog validation (about 1 minute)"]
+addopts = "-m 'not slow'"
