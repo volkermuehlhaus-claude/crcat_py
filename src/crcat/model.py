@@ -39,6 +39,7 @@ PICK = ('simplest', 'best')
 FORM = ('auto', 'pi', 'tee')
 EQUAL_ERROR = 1e-10      # RMS |S difference| below which two candidates count as equal
 SHORT_OHM = 1e-6         # resistor written for a shorted leg that cannot be merged away
+SHORT_SIEMENS = 1e12     # admittance standing in for a series leg of zero impedance
 K_MAX = 0.999            # largest coupling factor accepted
 
 
@@ -666,8 +667,10 @@ def _extract_tee(d):
             legs = [1 / (z[:, 0, 0] - z[:, 0, 1]), 1 / (z[:, 1, 1] - z[:, 0, 1]), 1 / z[:, 0, 1]]
     except np.linalg.LinAlgError:
         return None
-    if not all(np.all(np.isfinite(v)) for v in legs):
+    if not np.all(np.isfinite(z)) or not np.all(np.isfinite(legs[2])):
         return None
+    for v in legs[:2]:                           # a series leg of exactly zero impedance
+        v[~np.isfinite(v)] = SHORT_SIEMENS
     branches = [Branch('p1', 'c', 'p1c', d.f, legs[0], 'short'),
                 Branch('p2', 'c', 'p2c', d.f, legs[1], 'short'),
                 Branch('c', '0', 'c', d.f, legs[2], 'open')]

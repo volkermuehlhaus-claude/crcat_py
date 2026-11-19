@@ -10,7 +10,7 @@ from .component import use_ascii_units
 
 
 def write_outputs(m, network, outdir, base, formats, name, plot=True):
-    """Write netlist(s), model response, JSON and plot; return the list of files."""
+    """Write netlist(s), model response, JSON, plot and schematic; return the files."""
     outdir = pathlib.Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     files = []
@@ -30,6 +30,12 @@ def write_outputs(m, network, outdir, base, formats, name, plot=True):
         fig = compare(m, network)
         FigureCanvasAgg(fig)
         p = outdir / f'{base}_crcat.png'
+        fig.savefig(p, dpi=120)
+        files.append(p)
+        from .schematic import figure_model
+        fig = figure_model(m)
+        FigureCanvasAgg(fig)
+        p = outdir / f'{base}_crcat_schematic.png'
         fig.savefig(p, dpi=120)
         files.append(p)
     return files

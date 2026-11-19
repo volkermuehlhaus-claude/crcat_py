@@ -14,6 +14,11 @@ The theory is in J. C. Rautio, "Direct Least-Squares Rational-Polynomial Lumped-
 Extraction and Group Theory," IEEE Journal of Microwaves, 2025,
 doi:[10.1109/JMW.2025.3598986](https://doi.org/10.1109/JMW.2025.3598986).
 
+This is the `netlist-tool` branch: the port of CRCat (branch `main`) plus a tool on top of
+it that turns S-parameter data into a SPICE or Spectre netlist, at the command line or in a
+small window. Everything under [From S-parameters to a netlist](#from-s-parameters-to-a-netlist)
+is on this branch only.
+
 No MATLAB is needed: the catalog was converted from CRCat's `.mat` files to JSON (see
 [The catalog](#the-catalog)), and the numerics use mpmath instead of MATLAB's variable
 precision arithmetic.
@@ -66,13 +71,17 @@ C_p1p2 p1p2_n3 p2 1.7233e-13
 ```
 
 Written next to the input file: the netlist (`_crcat.sp`; with `--format spectre` or `both`
-also `_crcat.scs`), the S-parameters of the model (`_crcat.sNp`), the result as JSON and a
-plot of data against model.
+also `_crcat.scs`), the S-parameters of the model (`_crcat.sNp`), the result as JSON, a
+plot of data against model and the schematics of all branches (`_crcat_schematic.png`).
 
 ![crcat-gui](doc/gui.png)
 
 In the window, the Network column lists the other networks tried for each branch; choosing
-one updates netlist, error and plot at once.
+one updates netlist, error, schematic and plot at once. The panel under the table shows
+the schematic of the selected row with its element values; coupled coils are drawn as a
+pair with their coupling factor:
+
+![coupled coils in crcat-gui](doc/gui_coupled.png)
 
 ### Tee form
 
@@ -258,7 +267,7 @@ custom catalog whose name does not start with a known topology have no layout, a
 | `CRSprout` | `crcat.sprout.sprout` |
 | `CRCat.Draw`, `DrawArray`, `DrawRLC` | `crcat.draw` (`figure`, `figure_array`, `draw_network`) |
 | `SnP` (`Get`, `Pull`, `AddNoise`) | scikit-rf, `crcat.data.pull`, `seed(noise_floor_db=...)` |
-| (not in CRCat) | `crcat.model.extract`, `crcat.netlist`, `crcat-netlist`, `crcat-gui` |
+| (not in CRCat, this branch) | `crcat.model.extract`, `crcat.netlist`, `crcat.schematic`, `crcat-netlist`, `crcat-gui` |
 
 Not ported: generating the catalog and its equations (`FillCat_*`, MATLAB `solve`),
 `CRFitClean`, and the interactive prompts of `CRSeed`. Networks can therefore not be added to the custom catalog in Python yet.
@@ -286,7 +295,8 @@ Not ported: generating the catalog and its equations (`FillCat_*`, MATLAB `solve
 - **The default catalog** is base + custom without the transforms between base and custom
   networks (CRCat recomputes those).
 - The 35 base networks whose synthesis equations are all zero are treated as having none.
-- Added: the filter for models with positive real element values (`best(physical=True)`).
+- Added on this branch: the filter for models with positive real element values
+  (`best(physical=True)`).
 
 ## The catalog
 

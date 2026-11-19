@@ -42,19 +42,27 @@ def test_gui_extract_and_save(app, tmp_path):
     assert win.table.rowCount() == 3 and win.save_button.isEnabled()
     assert win.model.error_db() < -150 and 'Model (pi form): 5 elements' in win.status.text()
     assert '.SUBCKT dut_model p1 p2' in win.netlist_view.toPlainText()
+    # the schematic shows the selected row
+    def shown():
+        return win.schematic.axes[0].get_title()
+    assert win.schematic_row() is win.model.rows()[0] and shown() == 'p1 - gnd: CR3 C'
+    win.table.setCurrentCell(2, 0)
+    assert shown() == 'p1 - p2: CR7 SerRL'
+    assert 'L\n400pH' in [t.get_text() for t in win.schematic.axes[0].texts]
     # another candidate for the series branch: table, netlist and error follow
     combo = win.table.cellWidget(2, 1)
     assert combo.count() > 1
     before = win.netlist_view.toPlainText()
     combo.setCurrentIndex(combo.count() - 1)
     assert win.netlist_view.toPlainText() != before and win.model.error_db() > -150
+    assert shown() != 'p1 - p2: CR7 SerRL'                 # the schematic follows too
     combo.setCurrentIndex(0)
-    assert win.netlist_view.toPlainText() == before
+    assert win.netlist_view.toPlainText() == before and shown() == 'p1 - p2: CR7 SerRL'
     win.format.setCurrentIndex(win.format.findData('spectre'))
     assert 'subckt dut_model (p1 p2)' in win.netlist_view.toPlainText()
     files = win.save_to(tmp_path / 'out')
     assert {p.name for p in files} == {'dut_crcat.scs', 'dut_crcat.s2p', 'dut_crcat.json',
-                                       'dut_crcat.png'}
+                                       'dut_crcat.png', 'dut_crcat_schematic.png'}
     win.close()
 
 

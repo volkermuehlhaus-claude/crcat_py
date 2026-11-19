@@ -321,7 +321,7 @@ def test_cli(tmp_path, capsys):
     assert 'model (pi form): 5 elements' in out
     files = {p.name for p in (tmp_path / 'out').iterdir()}
     assert files == {'dut_crcat.sp', 'dut_crcat.scs', 'dut_crcat.s2p', 'dut_crcat.json',
-                     'dut_crcat.png'}
+                     'dut_crcat.png', 'dut_crcat_schematic.png'}
     d = json.loads((tmp_path / 'out' / 'dut_crcat.json').read_text())
     assert d['ports'] == 2 and len(d['branches']) == 3 and d['error_db'] < -100
     back = skrf.Network(str(tmp_path / 'out' / 'dut_crcat.s2p'))

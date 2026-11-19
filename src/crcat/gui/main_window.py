@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog
 from .. import __version__, data, model, netlist
 from ..cli_netlist import write_outputs
 from ..plots import compare
+from ..schematic import draw_row
 from .worker import ExtractWorker
 
 MAX_ALTERNATIVES = 25
@@ -122,9 +123,18 @@ class MainWindow(QMainWindow):
         mono.setStyleHint(QFont.StyleHint.Monospace)
         self.netlist_view.setFont(mono)
         self.netlist_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.currentCellChanged.connect(lambda *_: self._show_schematic())
+        self.schematic = Figure(figsize=(6, 2.4))
+        self.schematic_canvas = FigureCanvasQTAgg(self.schematic)
+        self.schematic_canvas.setMinimumHeight(170)
+        self.schematic_canvas.setToolTip('Schematic of the selected row')
         left = QSplitter(Qt.Orientation.Vertical)
         left.addWidget(self.table)
+        left.addWidget(self.schematic_canvas)
         left.addWidget(self.netlist_view)
+        left.setSizes([190, 230, 200])
         self.figure = Figure(figsize=(6, 5))
         self.canvas = FigureCanvasQTAgg(self.figure)
         split = QSplitter(Qt.Orientation.Horizontal)
@@ -253,6 +263,7 @@ class MainWindow(QMainWindow):
             self.table.setItem(row, 3, QTableWidgetItem(''))
         self.table.resizeColumnToContents(0)
         self.table.setColumnWidth(1, 270)
+        self.table.setCurrentCell(0, 0)
 
     def _choose(self, row, index):
         if self.model is not None and index >= 0:
@@ -272,8 +283,25 @@ class MainWindow(QMainWindow):
             text += '\nWarning: ' + '\nWarning: '.join(warnings)
         self.status.setText(text)
         self._show_netlist()
+        self._show_schematic()
         compare(m, self.network, self.figure)
         self.canvas.draw_idle()
+
+    def schematic_row(self):
+        """The result row whose schematic is shown (the selected one), or None."""
+        if self.model is None:
+            return None
+        rows = self.model.rows()
+        k = self.table.currentRow()
+        return rows[k] if 0 <= k < len(rows) else rows[0]
+
+    def _show_schematic(self):
+        row = self.schematic_row()
+        self.schematic.clear()
+        if row is not None:
+            draw_row(self.schematic.subplots(), row)
+            self.schematic.tight_layout()
+        self.schematic_canvas.draw_idle()
 
     def subckt_name(self):
         return netlist.subckt_name(pathlib.Path(self._loaded).stem + '_model')
