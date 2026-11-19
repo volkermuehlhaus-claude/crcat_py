@@ -39,6 +39,25 @@ def test_seed_subset():
     assert 'Pi admit port 1 to gnd' in r.report()
 
 
+def test_seed_upper_case_y_is_not_negated():
+    # Upper-case 'Y11' fits Y11 itself, as CRCat's documentation of SnP.Pull says. CRCat's
+    # code (c805a25) returns -Y11, which J. Rautio confirmed as an error there (2026-11-19):
+    # only lower-case 'ymn', m != n, takes the minus. On a 1-port, Y11 equals the pi-model
+    # y11, so both selections must give the README result with positive element values.
+    ids = [500, 239, 413, 4]
+    upper = seed(DATA / 'XXXII-39.y1p', fit='Y11', ids=ids)
+    lower = seed(DATA / 'XXXII-39.y1p', fit='y11', ids=ids)
+    for r in (upper, lower):
+        best = r.entries[0]
+        assert best.id in (500, 239, 413) and best.error < 1e-11
+        assert best.passive and all(v > 0 for v in best.component.values[0])
+    assert [e.id for e in upper.entries] == [e.id for e in lower.entries]
+    # With -Y11 (CRCat's code) the same circuit comes out with every element negated.
+    neg = seed((upper.freq, -upper.y), ids=[500])
+    assert neg.entries[0].error < 1e-11 and not neg.entries[0].passive
+    assert all(v < 0 for v in neg.entries[0].component.values[0])
+
+
 @pytest.mark.slow
 def test_seed_full_catalog():
     r = seed(DATA / 'XXXII-39.y1p')

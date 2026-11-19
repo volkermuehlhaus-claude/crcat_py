@@ -105,7 +105,7 @@ class Component:
             a, b = self.network.polynomials(row)
             a = np.array([complex(x) for x in a])
             b = np.array([complex(x) for x in b])
-            with np.errstate(divide='ignore', invalid='ignore'):
+            with np.errstate(all='ignore'):
                 out[i] = np.polyval(a, s) / np.polyval(b, s)
         return out[0] if solution is not None else out
 

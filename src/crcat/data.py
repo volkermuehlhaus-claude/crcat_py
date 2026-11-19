@@ -44,8 +44,8 @@ def pull(network, kind='y11'):
       'Ymn', 'Zmn', 'Smn': the network parameter itself.
     Multi-digit ports: 'y12_3'. Returns (data, description).
 
-    CRCat's code returns -Ymn for 'Ymn'; its documentation says the Y-parameter itself.
-    This port follows the documentation.
+    CRCat's code (commit c805a25) returns -Ymn for 'Ymn'; that is an error there, as its
+    author confirmed. The minus sign belongs only to 'ymn' with m != n.
     """
     letter, row, col = _parse(kind)
     n = network.nports
