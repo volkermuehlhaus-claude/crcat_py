@@ -404,7 +404,8 @@ class MainWindow(QMainWindow):
             self._show_verdict('', [])
             return
         self.data_check = c
-        self.status.setText(pathlib.Path(self._loaded).name + ': ' + '\n'.join(c.lines()))
+        self.status.setText(pathlib.Path(self._loaded).name + ': ' + '\n'.join(c.brief()))
+        self.status.setToolTip('\n'.join(c.lines()))        # the details
         suggestions = []
         if c.fmax:
             suggestions.append(advice.Suggestion(f'Fit to {c.fmax / 1e9:.3g} GHz',
@@ -687,17 +688,21 @@ class MainWindow(QMainWindow):
             self.table.item(row, 4).setText(shown.loss_text() if branch else '-')
             self.table.item(row, 5).setText(shown.values_text())
         warnings = m.warnings()
-        text = (f'Model ({m.form} form): {m.n_elements()} elements, S-parameter error {m.error_db():.1f} dB rms '
-                f'in the fit band {m.freq[0] / 1e9:.6g} to {m.freq[-1] / 1e9:.6g} GHz.')
+        # one line for the result, one for how the model is built; details in the tooltip
+        parts = [f'{m.form} form']
         if m.delay:
-            text += ' ' + m.lines_text()[0].upper() + m.lines_text()[1:] + '.'
-        if m.line_note:
-            text += '\n' + m.line_note[0].upper() + m.line_note[1:] + '.'
-        text += '\n' + m.dc_text() + '.'
+            parts.append(m.lines_text() + (' (automatic)' if 'automatically' in m.line_note else ''))
+        elif m.line_note:
+            parts.append(m.line_note)
+        parts.append(m.dc_text())
+        if m.left_out:
+            parts.append(f'{m.left_out[0]} points below {m.left_out[2] / 1e9:.3g} GHz left out')
+        text = '; '.join(parts)
         if warnings:
             text += '\nWarning: ' + '\nWarning: '.join(warnings)
         self.assessment = a = advice.assess(m, self.network, self.data_check)
         self.status.setText(a.text + '\n' + text)
+        self.status.setToolTip('\n'.join(model.describe(m)))
         self._show_verdict(a.level, a.suggestions)
         self.copy_button.setEnabled(True)
         self.copy_button.setText('Copy netlist')

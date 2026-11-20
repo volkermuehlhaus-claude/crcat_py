@@ -81,6 +81,8 @@ def test_check_kinds_and_verdicts():
     assert abs(c.line['L'] - 0.4e-9) < 0.02e-9 and abs(c.line['C'] - 40e-15) < 2e-15
     assert c.srf is None and c.nports == 2 and c.points == 80 and c.passive
     assert c.lines()[0].endswith('inductor') and c.lines()[-1].startswith('suited')
+    assert c.brief() == ['inductor, 2 port(s), 0.5 to 40 GHz, 80 points', '3 branches, pi form']
+    assert sum(len(x) for x in c.brief()) < sum(len(x) for x in c.lines())
     cap = make_network(2, {(1, 2): ('SerRC', [1.0, 100e-15])}, f=f)
     assert check.check(cap).kind == 'capacitor'
     one = skrf.Network(str(DATA / 'XXXII-39.y1p'))
@@ -97,6 +99,8 @@ def test_check_finds_a_line_and_the_frequency_to_stop_at():
     assert 200 < c.line['degrees'] < 230
     assert abs(c.fmax - 100e9 * 45 / c.line['degrees']) < 1e6      # 45 deg
     assert 'distributed' in c.reasons[0]
+    assert ' deg long at 100 GHz: a line at each port is added (' in c.brief()[1]
+    assert len(c.brief()) == 2 and len(c.brief()[1]) < 0.5 * len(c.reasons[0])
     short = check.check(line(50.0, 6e-12, f, loss=0.01), fmax=30e9)   # 65 deg: not yet distributed
     assert short.verdict == 'suited' and short.fmax is None
 

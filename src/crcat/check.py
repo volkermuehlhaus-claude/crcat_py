@@ -56,6 +56,7 @@ class DataCheck:
     def __init__(self):
         self.kind = self.verdict = self.form = None
         self.reasons, self.couplings, self.branches = [], [], {}
+        self.short = []                          # the reasons in a few words each
         self.fmax = self.srf = self.line = self.port_line = self.port_lines = None
         self.line_groups = []
         self.left_out = None
@@ -69,6 +70,18 @@ class DataCheck:
 
     def significant(self, form=None):
         return [b for b in self.branches.get(form or self.form, []) if not b.negligible]
+
+    def brief(self):
+        """The check in at most three short lines, for a window: what the data are, what
+        follows for the model, what was left out. :meth:`lines` has the details."""
+        out = [f'{self.kind}, {self.nports} port(s), {self.band[0] / 1e9:.3g} to '
+               f'{self.band[1] / 1e9:.3g} GHz, {self.points} points'
+               + (f', resonance at {self.srf / 1e9:.3g} GHz' if self.srf else '')]
+        out.append('; '.join(self.short))
+        if self.left_out:
+            out.append(f'{self.left_out[0]} points below {self.left_out[2] / 1e9:.3g} GHz left out '
+                       f'(DC only)')
+        return out
 
     def lines(self):
         """The check as a few lines of text."""
@@ -247,6 +260,8 @@ def check(network, fmin=None, fmax=None, target_db=-40.0, trim_low=True):
         c.reasons.append(f'{len(unphys)} of {len(signif)} branches of the data have a negative '
                          f'real part (in the {c.form} form), which no network of positive R, L, C '
                          f'gives: a structure of coupled or distributed conductors')
+        c.short.append(f'{len(unphys)} of {len(signif)} branches cannot be made of positive '
+                       f'R, L, C: coupled or distributed conductors')
     elif degrees > DISTRIBUTED_DEG:
         c.verdict = 'limited'
         c.reasons.append(f'the part is {degrees:.0f} deg long at {f[-1] / 1e9:.4g} GHz, distributed: '
@@ -254,16 +269,24 @@ def check(network, fmin=None, fmax=None, target_db=-40.0, trim_low=True):
                          f'{c.fmax / 1e9:.3g} GHz ({LUMPED_DEG} deg); for the whole band a line of '
                          f'{c.port_line["z0"]:.3g} ohm and {c.port_line["delay"] * 1e12:.3g} ps at each '
                          f'port is tried')
+        c.short.append(f'{degrees:.0f} deg long at {f[-1] / 1e9:.3g} GHz: a line at each port '
+                       f'is added ({c.port_line["z0"]:.3g} ohm, '
+                       f'{c.port_line["delay"] * 1e12:.3g} ps)')
     elif left:
         c.verdict = 'limited'
         c.reasons.append('branch ' + ', '.join(b.name for b in left) + ' of the data has a negative '
                          'real part; a narrower band or negative L and C may be needed')
+        c.short.append('branch ' + ', '.join(b.name for b in left) + ' has a negative real part: '
+                       'try a narrower band or negative L and C')
     else:
         c.verdict = 'suited'
         c.reasons.append(f'{len(signif)} branch(es) to model in the {c.form} form')
+        c.short.append(f'{len(signif)} branch' + ('' if len(signif) == 1 else 'es')
+                       + f', {c.form} form')
         for name in sorted({f'p{p[0]} - p{p[1]}' for p, _ in c.couplings}):
             c.reasons.append(f'magnetic coupling at branch {name} (k about {coupled[name]:.2f}): '
                              f'coupled coils will be tried')
+            c.short.append(f'coupled coils for {name} (k {coupled[name]:.2f})')
     if c.port_line:
         c.port_lines = [dict(c.port_line), dict(c.port_line)]
     if n > 2:
@@ -274,12 +297,17 @@ def check(network, fmin=None, fmax=None, target_db=-40.0, trim_low=True):
                     + f' are joined by conductors up to {max(g["degrees"] for g in long):.0f} deg '
                     f'long, distributed: a line at each of these ports is tried')
             c.verdict, c.reasons = 'limited', [text]     # the lines change what the rest is
+            c.short = ['ports ' + '; '.join(', '.join(f'p{p}' for p in g['ports']) for g in long)
+                       + f' are up to {max(g["degrees"] for g in long):.0f} deg apart: a line at '
+                       f'each of them is added']
     many = [b.name for b in signif if b.resonances > 2]
     if many and c.verdict != 'not suited':
         c.reasons.append('branch ' + ', '.join(many) + ' has more than two resonances in the band: '
                          'five elements may not be enough')
+        c.short.append(', '.join(many) + ': more than two resonances')
     if not c.passive:
         c.reasons.append('the data are not passive')
+        c.short.append('data not passive')
     return c
 
 
