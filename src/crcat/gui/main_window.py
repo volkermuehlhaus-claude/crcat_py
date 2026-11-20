@@ -390,6 +390,7 @@ class MainWindow(QMainWindow):
                                        f'padding: 2px 8px; border-radius: 3px; font-weight: bold;')
         for b in self.suggest_buttons:
             self.suggest_row.removeWidget(b)
+            b.hide()                             # gone at once, not only when Qt deletes it
             b.deleteLater()
         self.suggest_buttons = []
         for s in suggestions:
