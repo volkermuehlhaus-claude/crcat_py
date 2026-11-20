@@ -411,3 +411,35 @@ def test_frequency_of_use():
         model.extract(net, model.Options(ftarget=90e9))
     with pytest.raises(ValueError):
         model.Options(ftarget=-1).check()
+
+
+# --- a relative error far over its limit decides the verdict -----------------------------------
+
+def test_verdict_names_and_weighs_a_missed_limit():
+    net = skin_inductor()
+    m = model.extract(net)
+    assert advice.assess(m, net).level == 'good'
+    b = m.branches[2]                                      # p1 - p2, the lossy inductor
+    lossless = next(c for c in b.candidates if c.loss is not None and c.loss > 0.9)
+    m.choose(2, lossless)                                  # an inductor without its resistance
+    text = b.warning(m.options)
+    assert text.startswith('p1 - p2: error limit not reached: ')
+    assert f'loss {lossless.loss_text()} (limit 30 %)' in text
+    assert b.missed(m.options)[-1].startswith('loss ') and b.warning() == 'p1 - p2: error limit not reached'
+    a = advice.assess(m, net)
+    assert a.level == 'poor' and text in a.details
+    # a limit missed by less than twice is not 'poor' by this rule
+    loose = copy.copy(m.options)
+    loose.loss_percent = 100 * lossless.loss / 1.5
+    loose.target_db = -10.0
+    m.options = loose
+    assert advice.assess(m, net).level != 'poor' or lossless.reactance * 100 > 2 * loose.reactance_percent
+
+
+def test_verdict_of_a_one_port():
+    one = make_network(1, {(1,): ('SerRLC', [1.0, 50e-12, 170e-15])})
+    m = model.extract(one, model.Options(pick='best'))
+    a = advice.assess(m, one)
+    assert a.level == 'good' and 'C within' in a.text and 'Q within' in a.text
+    aimed = model.extract(one, model.Options(pick='best', ftarget=one.f[20]))
+    assert 'C ' in advice.assess(aimed, one).target and 'Q ' in advice.assess(aimed, one).target

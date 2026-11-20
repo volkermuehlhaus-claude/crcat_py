@@ -324,10 +324,27 @@ class Branch:
         return (self.chosen is not None and not self.chosen.is_trivial
                 and any(v < 0 for v in self.chosen.component.values[0]))
 
-    def warning(self):
+    def missed(self, options):
+        """The limits the chosen candidate misses, in words: ['loss 61.6 % (limit 30 %)']."""
+        c, out = self.chosen, []
+        if c is None:
+            return out
+        if c.error > options.target * (1 + 1e-9):
+            out.append(f'S-parameters {c.error_db:.1f} dB (limit {options.target_db:g} dB)')
+        if options.reactance_percent > 0 and c.reactance is not None \
+                and 100 * c.reactance > options.reactance_percent:
+            out.append(f'reactance {c.reactance_text()} (limit {options.reactance_percent:g} %)')
+        if options.loss_percent > 0 and c.loss is not None and 100 * c.loss > options.loss_percent:
+            out.append(f'loss {c.loss_text()} (limit {options.loss_percent:g} %)')
+        return out
+
+    def warning(self, options=None):
         if self.group is not None or not self.target_missed:
             return ''
         text = f'{self.name}: error limit not reached'
+        over = self.missed(options) if options is not None else []
+        if over:
+            text += ': ' + ', '.join(over)
         if self.negative_real_part > 0.1:
             text += (f'; the data of this branch have a negative real part in '
                      f'{100 * self.negative_real_part:.0f} % of the band, which positive '
@@ -654,7 +671,7 @@ class Model:
         return len(self.elements())
 
     def warnings(self):
-        out = [b.warning() for b in self.branches if b.warning()]
+        out = [b.warning(self.options) for b in self.branches if b.warning()]
         for b in self.free_branches():
             if b.dc == 'open' and b.chosen is not None and b.chosen.conducts:
                 out.append(f'{b.name}: the model has a DC path here, the data have none '

@@ -233,6 +233,12 @@ poor: 0.275 to 110 GHz: 11 elements, S-parameters within -4.3 dB, L within 52 %,
       try: Fit to 21.5 GHz; Allow negative L and C
 ```
 
+A reactance or loss error of more than twice its limit makes the verdict "poor" even
+when the S-parameter error looks fine: a part that reflects or passes almost everything
+hides such an error in its S-parameters. The warning names the limits that are missed,
+for example "p1 - gnd: error limit not reached: S-parameters -36.9 dB (limit -40 dB), loss
+61.6 % (limit 30 %)".
+
 When the model is not good, the verdict comes with suggestions that follow from the data
 check and from what went wrong: a lower upper frequency, negative L and C (resistors stay
 positive), more elements, the tee form. In the window each one is a button that changes
@@ -437,7 +443,7 @@ the ports is zero (part of the tests). Ports are never given such a resistor.
 |---|---|---|
 | S-parameters | magnitude and phase, data (thin line with circles) and model (solid line) | `_crcat.png` |
 | Error | \|S model - S data\| of each S-parameter against frequency, with the limit | `_crcat_error.png` |
-| L (or C), R, Q | 2-ports: series L or C and series R from -1/Y21, Q from 1/Y11 | `_crcat_lrq.png` |
+| L (or C), R, Q | 2-ports: series L or C and series R from -1/Y21, Q from 1/Y11; 1-ports: L or C, R and Q from 1/Y11 | `_crcat_lrq.png` |
 | Size against accuracy | error of the whole model against its number of elements, see above | window only |
 
 The plots show the fit band; "All data" in the window (`--plot-all-data`) shows every

@@ -247,6 +247,27 @@ def test_plot_views():
                              (2, 3): ('SerRL', [1.0, 0.25e-9])})
     m3 = model.extract(three)
     assert plots.views_for(m3) == ['s', 'error', 'size']
+    # one port: L or C, R and Q of its input impedance
+    one = make_network(1, {(1,): ('SerRLC', [1.0, 50e-12, 170e-15])})
+    m1 = model.extract(one, model.Options(pick='best'))
+    assert plots.views_for(m1) == ['s', 'error', 'lrq', 'size']
+    fig = plots.compare(m1, one, view='lrq')
+    assert [ax.get_ylabel() for ax in fig.axes] == ['C (fF)', 'R (ohm)', 'Q']
+    assert fig.axes[0].get_title().startswith('from 1/Y11;')
+    # a small figure: the layout keeps labels and legend apart, long labels get smaller
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    small = Figure(figsize=(5, 2.4))
+    FigureCanvasAgg(small)
+    plots.compare(m, net, small, view='s')
+    small.canvas.draw()
+    assert small.get_layout_engine().__class__.__name__ == 'ConstrainedLayoutEngine'
+    boxes = [ax.yaxis.label.get_window_extent() for ax in small.axes]
+    assert boxes[1].y1 < boxes[0].y0                     # the two y labels do not touch
+    legend = small.legends[0].get_window_extent()
+    xlabel = small.axes[-1].xaxis.label.get_window_extent()
+    assert legend.y1 <= xlabel.y0 + 1                    # the legend sits under the x label
+    assert small.axes[0].yaxis.label.get_fontsize() < 10
     fig = plots.compare(m3, three, view='size')
     assert len(fig.crcat_tradeoff) >= 2 and fig.axes[0].get_xlabel() == 'elements in the model'
     with pytest.raises(ValueError):

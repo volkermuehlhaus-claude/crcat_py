@@ -286,6 +286,7 @@ class MainWindow(QMainWindow):
         left.setSizes([190, 230, 200])
         self.figure = Figure(figsize=(6, 5))
         self.canvas = FigureCanvasQTAgg(self.figure)
+        self.canvas.setMinimumHeight(260)
         self.view = QComboBox()
         self.view.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.view.setToolTip('S-parameters; the error of each S-parameter against frequency; '
@@ -677,7 +678,9 @@ class MainWindow(QMainWindow):
         self._fill_table()
         first = self.view.count() == 0
         self._refresh()
-        if first and self.data_check is not None and self.data_check.kind in ('inductor', 'capacitor'):
+        if first and self.data_check is not None and (
+                self.data_check.kind in ('inductor', 'capacitor')
+                or (self.data_check.kind.startswith('one-port') and not self.data_check.srf)):
             self.view.setCurrentIndex(self.view.findData('lrq'))     # what such a part is judged by
 
     # --- results ------------------------------------------------------------------------

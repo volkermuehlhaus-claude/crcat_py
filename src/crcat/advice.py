@@ -18,6 +18,7 @@ GOOD_DB = 3          # 'good': model error within this of the S-parameter limit
 FAIR_DB = 12         # 'fair': within this
 Q_GOOD = 0.2         # median relative error of Q for 'good' (2-port inductors, capacitors)
 Q_FAIR = 0.5
+POOR_MISS = 2.0      # 'poor': the reactance or loss of a branch misses its limit this many times
 
 
 class Suggestion:
@@ -72,7 +73,7 @@ def at_frequency(model, network, freq):
     near = 20 * math.log10(max(model.error_near(freq), 1e-30))
     out = {'frequency': float(f[0]), 'error_db': near}
     text = f'at {f[0] / 1e9:.4g} GHz: '
-    if model.nports == 2:
+    if model.nports <= 2:
         w = 2 * np.pi * f[0]
         (zs_d, zin_d), (zs_m, zin_m) = (series_quantities(s, model.z0)
                                         for s in (network.s[i:i + 1], model.s_matrix(f)))
@@ -110,7 +111,7 @@ def assess(model, network, check=None):
     parts = [f'{model.n_elements()} elements, S-parameters within {err:.1f} dB']
     quantities = {'error_db': err}
     details = []
-    if model.nports == 2:
+    if model.nports <= 2:                        # the figures an L or C is judged by
         name, ex, er, eq = _series_errors(model, network)
         quantities.update({name: ex, 'R': er, 'Q': eq})
         if math.isfinite(ex) and math.isfinite(eq):
@@ -121,6 +122,15 @@ def assess(model, network, check=None):
             elif eq > Q_GOOD and level == 'good':
                 level = 'fair'
     text = f'{band}: ' + ', '.join(parts)
+    # a relative error far over its limit: the S-parameters hide it where a part reflects
+    # or passes almost everything, so it decides the verdict
+    for b in model.free_branches():
+        c = b.chosen
+        far = [name for name, value, limit in (('reactance', c.reactance, opt.reactance_percent),
+                                               ('loss', c.loss, opt.loss_percent))
+               if limit > 0 and value is not None and 100 * value > POOR_MISS * limit]
+        if far:
+            level = 'poor'
     details += warnings
 
     suggestions = []

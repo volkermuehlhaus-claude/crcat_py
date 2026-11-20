@@ -64,8 +64,8 @@ MAX_TRACES = 8          # with more S-parameters, only the ones with the largest
 
 
 def views_for(model):
-    """The views that make sense for a model ('lrq' needs two ports)."""
-    return [v for v in VIEWS if v != 'lrq' or model.nports == 2]
+    """The views that make sense for a model ('lrq' is for one and two ports)."""
+    return [v for v in VIEWS if v != 'lrq' or model.nports <= 2]
 
 
 def _data(model, network, all_data):
@@ -109,14 +109,22 @@ def _finish(fig, axes, model, f, title, all_data, legend_ax=None):
         ax.grid(True, alpha=0.3)
     axes[-1].set_xlabel('frequency (GHz)')
     axes[0].set_title(title + (', fit band shaded' if all_data else ''), fontsize=9)
-    fig.tight_layout()
+    _fit_labels(fig, axes)
     if legend_ax is not None:                        # below the plots, never on the curves
         handles, labels = legend_ax.get_legend_handles_labels()
-        if handles:
-            fig.legend(handles, labels, loc='lower center', ncol=min(len(labels), 5), fontsize=8,
-                       frameon=False)
-            rows = -(-len(labels) // 5)
-            fig.subplots_adjust(bottom=0.15 + 0.05 * rows)
+        if handles:                                  # 'outside': the layout makes room for it
+            fig.legend(handles, labels, loc='outside lower center', ncol=min(len(labels), 5),
+                       fontsize=8, frameon=False)
+
+
+def _fit_labels(fig, axes):
+    """Axis labels that fit a small figure: a label along a short axis gets a smaller font,
+    so that the labels of stacked plots do not run into each other."""
+    room = 72 * fig.get_size_inches()[1] * 0.62 / len(axes)      # points along one y axis
+    for ax in axes:
+        text = ax.get_ylabel()
+        if text:
+            ax.yaxis.label.set_fontsize(max(6.0, min(10.0, room / (0.55 * len(text)))))
 
 
 def _view_s(fig, model, network, all_data):
@@ -174,10 +182,14 @@ def _view_error(fig, model, network, all_data):
 
 def series_quantities(s, z0):
     """Series impedance and port-1 input impedance of 2-port S-parameters: the usual
-    inductor / capacitor figures. Returns (Zseries = -1/Y21, Zin = 1/Y11)."""
-    eye = np.eye(2)
-    y = np.linalg.solve(z0 * (eye + s), eye - s)     # Y = (1/z0) (I + S)^-1 (I - S)
+    inductor / capacitor figures. Returns (Zseries = -1/Y21, Zin = 1/Y11). For a 1-port
+    both are its input impedance 1/Y11."""
+    n = s.shape[-1]
+    eye = np.eye(n)
     with np.errstate(all='ignore'):
+        y = np.linalg.solve(z0 * (eye + s), eye - s)     # Y = (1/z0) (I + S)^-1 (I - S)
+        if n == 1:
+            return 1 / y[:, 0, 0], 1 / y[:, 0, 0]
         return -1 / y[:, 1, 0], 1 / y[:, 0, 0]
 
 
@@ -200,13 +212,14 @@ def _view_lrq(fig, model, network, all_data):
     capacitive = np.median(zs_d.imag[in_band]) < 0
     ax1, ax2, ax3 = fig.subplots(3, 1, sharex=True)
     with np.errstate(all='ignore'):
+        series = 'series ' if model.nports == 2 else ''
         if capacitive:
-            rows = [(ax1, -1e15 / (w * zs_d.imag), -1e15 / (w * zs_m.imag), 'series C (fF)')]
+            rows = [(ax1, -1e15 / (w * zs_d.imag), -1e15 / (w * zs_m.imag), f'{series}C (fF)')]
         else:
-            rows = [(ax1, 1e12 * zs_d.imag / w, 1e12 * zs_m.imag / w, 'series L (pH)')]
-        rows += [(ax2, zs_d.real, zs_m.real, 'series R (ohm)'),
+            rows = [(ax1, 1e12 * zs_d.imag / w, 1e12 * zs_m.imag / w, f'{series}L (pH)')]
+        rows += [(ax2, zs_d.real, zs_m.real, f'{series}R (ohm)'),
                  (ax3, np.abs(zin_d.imag) / zin_d.real, np.abs(zin_m.imag) / zin_m.real,
-                  'Q at port 1')]
+                  'Q at port 1' if model.nports == 2 else 'Q')]
     readout = Readout(fg)
     for ax, d, m, label in rows:
         _pair(ax, fg, d, m, 'C0')
@@ -225,8 +238,8 @@ def _view_lrq(fig, model, network, all_data):
                 ax.set_ylim(*_limits(d[ok]))
     fig.crcat_readout = readout
     _style_legend(ax1)
-    _finish(fig, (ax1, ax2, ax3), model, f,
-            'from -1/Y21 (series) and 1/Y11 (Q); circles: data, lines: model',
+    source = 'from -1/Y21 (series) and 1/Y11 (Q)' if model.nports == 2 else 'from 1/Y11'
+    _finish(fig, (ax1, ax2, ax3), model, f, source + '; circles: data, lines: model',
             all_data, ax1)
 
 
@@ -248,7 +261,6 @@ def _view_size(fig, model, network, all_data):
     ax.grid(True, alpha=0.3)
     ax.xaxis.get_major_locator().set_params(integer=True)
     ax.legend(fontsize=8)
-    fig.tight_layout()
     fig.crcat_tradeoff = points
     fig.crcat_readout = Readout(np.array([]))
 
@@ -267,6 +279,7 @@ def compare(model, network, fig=None, view='s', all_data=False):
         from matplotlib.figure import Figure
         fig = Figure(figsize=(8, 6.5))
     fig.clear()
+    fig.set_layout_engine('constrained')             # labels and legend never overlap
     fig.crcat_tradeoff = None
     {'s': _view_s, 'error': _view_error, 'lrq': _view_lrq,
      'size': _view_size}[view](fig, model, network, all_data)
