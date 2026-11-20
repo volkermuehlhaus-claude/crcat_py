@@ -87,10 +87,13 @@ def main(argv=None):
     ap.add_argument('--form', choices=model.FORM, default=d.form,
                     help='pi; tee (2-ports); auto (default): pi, and for a 2-port the tee '
                          'form too if a pi branch misses the limit')
-    ap.add_argument('--delay', default='off',
-                    help="line at each port (reference impedance), removed before the fit "
-                         "and put back in the netlist as a line element: off (default) or the "
-                         "delay in ps")
+    ap.add_argument('--delay', default='auto',
+                    help="line at each port, removed before the fit and put back in the netlist "
+                         "as a line element: auto (default: only for a 2-port that is "
+                         "distributed in the fit band), off, or the delay in ps")
+    ap.add_argument('--line-z0', type=float, default=None,
+                    help='impedance in ohm of the line of a given --delay (default: the '
+                         'reference impedance of the data)')
     ap.add_argument('--sequential', action='store_true',
                     help='pi form: fit the branches to ground to the port admittance minus the '
                          'models (not the data) of the branches between ports')
@@ -139,7 +142,8 @@ def main(argv=None):
             tolerance=args.tolerance, max_elements=args.max_elements,
             form=args.form, coupling=not args.no_coupling, full_search=args.full_search,
             sequential=args.sequential,
-            delay='off' if args.delay == 'off' else float(args.delay) * 1e-12)
+            delay=args.delay if args.delay in ('off', 'auto') else float(args.delay) * 1e-12,
+            line_z0=args.line_z0)
         m = model.extract(network, opt)
     except ValueError as ex:
         sys.exit(f'error: {ex}')

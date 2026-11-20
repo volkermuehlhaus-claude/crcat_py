@@ -166,7 +166,15 @@ def test_gui_quality_and_advanced(app, tmp_path):
     assert win.quality.currentData() == 'accurate'
     # hidden settings that differ from the defaults are named
     win.require.setCurrentIndex(win.require.findData('positive-r'))
+    assert win.line_mode.currentData() == 'auto' and not win.delay.isEnabled()
+    win.line_mode.setCurrentIndex(win.line_mode.findData('off'))
+    assert 'no line at the ports' in win.advanced_note.text() and win.options().delay == 'off'
+    win.line_mode.setCurrentIndex(win.line_mode.findData('fixed'))
+    assert win.delay.isEnabled() and win.line_z0.isEnabled()
     win.delay.setValue(1.5)
+    win.line_z0.setValue(70)
+    assert win.options().delay == 1.5e-12 and win.options().line_z0 == 70
+    win.line_z0.setValue(0)
     win.coupling.setChecked(False)
     assert win.advanced_note.text() == ('In use: R positive, L and C any sign, '
                                         'line 1.5 ps at each port, no coupled coils')

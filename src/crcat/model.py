@@ -105,10 +105,15 @@ class Options:
         minus their data, so it makes up for what they missed (J. Rautio's suggestion).
         Off by default: what a model missed is often not a physical admittance, and the
         branch to ground then misses its limits (see the README for the comparison).
-    delay: a piece of line (reference impedance, this delay) at each port, removed from
-        the data before the fit and put back in the netlist as a line element: 'off' or
-        the delay in seconds. For data with a known feed line; a line that is short
-        against the wavelength needs none of this, the lumped elements cover it.
+    delay: a piece of line at each port, removed from the data before the fit and put back
+        in the netlist as a line element. 'auto' (default): only for a 2-port that is
+        distributed in the fit band (more than 90 degrees long as a line, from its
+        low-frequency L and C, see crcat.check): a line of the part's own impedance that
+        leaves 30 degrees to the lumped elements; kept if that model is within the limits
+        or better than the one without lines. 'off': never. A number: this delay in
+        seconds, for data with a known feed line.
+    line_z0: impedance of the line of a given delay in ohm (default: the reference
+        impedance of the data).
     full_search: synthesize every network instead of only those that can be chosen
         (slower, same result; fills the list of alternatives completely).
     dps: working precision of the fits, decimal digits.
@@ -126,7 +131,8 @@ class Options:
     form: str = 'auto'
     coupling: bool = True
     sequential: bool = False
-    delay: object = 'off'
+    delay: object = 'auto'
+    line_z0: float = None
     full_search: bool = False
     dps: int = DEFAULT_DPS
 
@@ -143,10 +149,12 @@ class Options:
             raise ValueError('max_elements must be 1..5')
         if self.target_db >= 0:
             raise ValueError('target_db must be negative')
-        if not (self.delay == 'off' or (isinstance(self.delay, (int, float))
-                                        and not isinstance(self.delay, bool)
-                                        and self.delay >= 0)):
-            raise ValueError("delay must be 'off' or a delay in seconds (>= 0)")
+        if not (self.delay in ('off', 'auto') or (isinstance(self.delay, (int, float))
+                                                  and not isinstance(self.delay, bool)
+                                                  and self.delay >= 0)):
+            raise ValueError("delay must be 'auto', 'off' or a delay in seconds (>= 0)")
+        if self.line_z0 is not None and not self.line_z0 > 0:
+            raise ValueError('line_z0 must be positive')
         if self.reactance_percent < 0 or self.loss_percent < 0:
             raise ValueError('reactance_percent and loss_percent must be >= 0')
 
@@ -385,6 +393,8 @@ class Model:
         self.couplings = []
         self.form = form
         self.delay = 0.0                         # line at each port, seconds
+        self.line_z0 = z0                        # and its impedance
+        self.line_note = ''                      # why an automatic line is (not) there
         self.freq, self.s_data = freq, s_data    # fit band
         self.options = options
         self.source = source
@@ -494,7 +504,7 @@ class Model:
                 s = _tee_s(1 / a, 1 / b, c, self.z0)
         else:
             s = _y2s(self.y_matrix(freq), self.z0)
-        return shift_ports(s, freq, self.delay) if self.delay else s
+        return shift_ports(s, freq, self.delay, self.line_z0, self.z0) if self.delay else s
 
     def to_network(self, freq=None):
         """The model's response as a scikit-rf Network (default: the fit band)."""
@@ -537,7 +547,7 @@ class Model:
             out = [(text, [e if e[1] == 'K' else
                            (e[0], e[1], core.get(e[2], e[2]), core.get(e[3], e[3]), e[4])
                            for e in part]) for text, part in out]
-            out.append((f'line of {self.delay * 1e12:.4g} ps ({self.z0:g} ohm) at each port',
+            out.append((f'line of {self.delay * 1e12:.4g} ps ({self.line_z0:.4g} ohm) at each port',
                         [(f'T_{p}', 'T', p, c, self.delay) for p, c in core.items()]))
         return out
 
@@ -557,7 +567,7 @@ class Model:
                     for n, k, n1, n2, v in part]
         return {
             'source': self.source, 'ports': self.nports, 'z0': self.z0, 'form': self.form,
-            'delay_s': self.delay,
+            'delay_s': self.delay, 'line_z0': self.line_z0 if self.delay else None,
             'band_hz': [float(self.freq[0]), float(self.freq[-1])],
             'points': int(self.freq.size),
             'options': dataclasses.asdict(self.options),
@@ -597,7 +607,9 @@ class Model:
                          f'{text}')
         lines += ['warning: ' + w for w in self.warnings()]
         if self.delay:
-            lines.append(f'line at each port: {self.delay * 1e12:.4g} ps, {self.z0:g} ohm')
+            lines.append(f'line at each port: {self.delay * 1e12:.4g} ps, {self.line_z0:.4g} ohm')
+        if self.line_note:
+            lines.append(self.line_note)
         lines.append(f'model ({self.form} form): {self.n_elements()} elements, S-parameter '
                      f'error {self.error_db():.1f} dB rms, {_db(self.max_error()):.1f} dB max')
         return '\n'.join(lines)
@@ -615,11 +627,22 @@ def _y2s(y, z0):
     return np.einsum('fij,fjk->fik', eye - z0 * y, np.linalg.inv(eye + z0 * y))
 
 
-def shift_ports(s, freq, delay):
-    """S-parameters with a matched line of ``delay`` seconds added at every port
-    (negative delay: removed)."""
+def _renormalize(s, z_from, z_to):
+    """S-parameters for another (real, common) reference impedance."""
+    g = (z_to - z_from) / (z_to + z_from)
+    eye = np.eye(s.shape[-1])
+    return np.einsum('fij,fjk->fik', s - g * eye, np.linalg.inv(eye - g * s))
+
+
+def shift_ports(s, freq, delay, line_z0=None, z0=None):
+    """S-parameters with a line of ``delay`` seconds added at every port (negative delay:
+    removed). The line has the reference impedance, or ``line_z0`` if that and the
+    reference impedance ``z0`` are given."""
     d = np.exp(-2j * np.pi * np.asarray(freq, dtype=float) * delay)
-    return s * (d * d)[:, None, None]
+    if line_z0 is None or z0 is None or line_z0 == z0:
+        return s * (d * d)[:, None, None]
+    s = _renormalize(s, z0, line_z0) * (d * d)[:, None, None]
+    return _renormalize(s, line_z0, z0)
 
 
 def _tee_s(za, zb, yc, z0):
@@ -1247,8 +1270,9 @@ def extract(network, options=None, catalog=None, progress=None, cancel=None):
         if progress is not None:
             progress(done[0], 'coupled coils' if fraction >= 0.6 else '')
 
-    def run(delay):
-        s_core = shift_ports(s_data, f, -delay) if delay else s_data
+    def run(delay, line_z0=None):
+        line_z0 = line_z0 or z0
+        s_core = shift_ports(s_data, f, -delay, line_z0, z0) if delay else s_data
         try:
             y = np.linalg.solve(z0 * (eye + s_core), eye - s_core)
         except np.linalg.LinAlgError:            # ports shorted together: no Y-matrix;
@@ -1271,15 +1295,46 @@ def extract(network, options=None, catalog=None, progress=None, cancel=None):
             elif tee is not None and tee.error() < model.error():
                 model = tee
         model.source = source
-        model.delay = delay
+        model.delay, model.line_z0 = delay, line_z0
         model.s_data = s_data                    # the data as given, with the lines
         model.reciprocity_error = _rms(d.s_ref - s_core)
         return model
 
-    model = run(0.0 if opt.delay == 'off' else float(opt.delay))
+    if opt.delay == 'off':
+        model = run(0.0)
+    elif opt.delay != 'auto':
+        model = run(float(opt.delay), opt.line_z0)
+    else:
+        model = _auto_line(network, opt, run, done)
     if progress is not None:
         progress(1.0, 'done')
     return model
+
+
+def _auto_line(network, opt, run, done):
+    """Delay 'auto': lines at the ports only where the data check finds a distributed
+    2-port, and only if the model with them is within the limits or the better one."""
+    from . import check as _check                # check imports this module
+    try:
+        line = _check.check(network, opt.fmin, opt.fmax, opt.target_db).port_line
+    except ValueError:
+        line = None
+    if line is None:
+        return run(0.0)
+    with_line = run(line['delay'], line['z0'])
+    text = f'{line["delay"] * 1e12:.3g} ps, {line["z0"]:.3g} ohm'
+    if not _missed(with_line):
+        with_line.line_note = f'line at each port chosen automatically ({text}): the part is distributed'
+        return with_line
+    done[0] = 0.0                                # second search: the bar starts again
+    plain = run(0.0)
+    if with_line.error() < plain.error():
+        with_line.line_note = (f'line at each port chosen automatically ({text}): without it '
+                               f'{plain.error_db():.1f} dB')
+        return with_line
+    plain.line_note = (f'no line at the ports: with one ({text}) the error was '
+                       f'{with_line.error_db():.1f} dB')
+    return plain
 
 
 def _delay_text(delay):

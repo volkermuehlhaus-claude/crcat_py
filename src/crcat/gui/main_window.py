@@ -96,11 +96,23 @@ class MainWindow(QMainWindow):
                                  'coils with a coupling factor')
         self.delay = QDoubleSpinBox(decimals=2, minimum=0, maximum=1000, singleStep=0.1,
                                     suffix=' ps')
-        self.delay.setSpecialValueText('none')
-        self.delay.setToolTip(
-            'A piece of line (reference impedance, this delay) at each port, removed from the '
-            'data before the fit and put back in the netlist as a line element. For data '
-            'with a known feed line.')
+        self.delay.setToolTip('Delay of the line at each port (Line: Fixed delay)')
+        self.line_mode = QComboBox()
+        for key, text in (('auto', 'Automatic'), ('off', 'None'), ('fixed', 'Fixed delay')):
+            self.line_mode.addItem(text, key)
+        self.line_mode.setToolTip(
+            'A piece of line at each port, removed from the data before the fit and put back '
+            'in the netlist as a line element.\n'
+            'Automatic: only for a 2-port that is distributed in the fit band (longer than '
+            '90 degrees); the line then has the impedance of the part and leaves 30 degrees '
+            'to the lumped elements.\n'
+            'Fixed delay: for data with a known feed line.')
+        self.line_z0 = QDoubleSpinBox(decimals=1, minimum=0, maximum=1000, suffix=' ohm')
+        self.line_z0.setSpecialValueText('reference')
+        self.line_z0.setToolTip('Impedance of the line of a fixed delay; 0 (shown as '
+                                '"reference") is the reference impedance of the data')
+        self.line_mode.currentIndexChanged.connect(self._line_mode_changed)
+        self._line_mode_changed()
         self.sequential = QCheckBox('Sequential')
         self.sequential.setChecked(defaults.sequential)
         self.sequential.setToolTip(
@@ -153,7 +165,9 @@ class MainWindow(QMainWindow):
         form3.addRow('Error limit, loss', self.loss_percent)
         form4 = QFormLayout()
         form4.addRow('Form', self.form)
-        form4.addRow('Line at each port', self.delay)
+        form4.addRow('Line at each port', self.line_mode)
+        form4.addRow('delay', self.delay)
+        form4.addRow('impedance', self.line_z0)
         form5 = QVBoxLayout()
         for w in (self.coupling, self.refine, self.sequential):
             form5.addWidget(w)
@@ -273,9 +287,9 @@ class MainWindow(QMainWindow):
             w.valueChanged.connect(self._reselect)
         self.pick.currentIndexChanged.connect(self._reselect)
         for w in (self.target, self.reactance_percent, self.loss_percent, self.max_elements,
-                  self.delay):
+                  self.delay, self.line_z0):
             w.valueChanged.connect(self._settings_changed)
-        for w in (self.pick, self.require, self.form):
+        for w in (self.pick, self.require, self.form, self.line_mode):
             w.currentIndexChanged.connect(self._settings_changed)
         for w in (self.coupling, self.refine, self.sequential):
             w.toggled.connect(self._settings_changed)
@@ -283,9 +297,10 @@ class MainWindow(QMainWindow):
         for w in (self.fmin, self.fmax):
             w.setKeyboardTracking(False)         # act on the finished number
             w.valueChanged.connect(lambda *_: self._invalidate(band=True))
-        self.delay.setKeyboardTracking(False)
-        self.delay.valueChanged.connect(lambda *_: self._invalidate())
-        for w in (self.require, self.form):
+        for w in (self.delay, self.line_z0):
+            w.setKeyboardTracking(False)
+            w.valueChanged.connect(lambda *_: self._invalidate())
+        for w in (self.require, self.form, self.line_mode):
             w.currentIndexChanged.connect(lambda *_: self._invalidate())
         for w in (self.coupling, self.refine, self.sequential):
             w.toggled.connect(lambda *_: self._invalidate())
@@ -390,6 +405,18 @@ class MainWindow(QMainWindow):
 
     # --- model quality, advanced settings ----------------------------------------------------
 
+    def _line_mode_changed(self, *_):
+        fixed = self.line_mode.currentData() == 'fixed'
+        self.delay.setEnabled(fixed)
+        self.line_z0.setEnabled(fixed)
+
+    def line_delay(self):
+        """Options.delay from the fields."""
+        mode = self.line_mode.currentData()
+        if mode == 'fixed':
+            return self.delay.value() * 1e-12 or 'off'
+        return mode
+
     def show_advanced(self, on):
         self.advanced.setVisible(on)
         self.advanced_button.setArrowType(Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow)
@@ -427,7 +454,9 @@ class MainWindow(QMainWindow):
             notes.append(f'up to {opt.max_elements} elements per branch')
         if opt.form != d.form:
             notes.append(f'{opt.form} form')
-        if opt.delay != d.delay:
+        if opt.delay == 'off':
+            notes.append('no line at the ports')
+        elif opt.delay != d.delay:
             notes.append(f'line {opt.delay * 1e12:.4g} ps at each port')
         if opt.coupling != d.coupling:
             notes.append('no coupled coils')
@@ -443,7 +472,9 @@ class MainWindow(QMainWindow):
         self.require.setCurrentIndex(self.require.findData(d.require))
         self.max_elements.setValue(d.max_elements)
         self.form.setCurrentIndex(self.form.findData(d.form))
+        self.line_mode.setCurrentIndex(self.line_mode.findData('auto'))
         self.delay.setValue(0)
+        self.line_z0.setValue(0)
         self.coupling.setChecked(d.coupling)
         self.refine.setChecked(d.refine)
         self.sequential.setChecked(d.sequential)
@@ -505,7 +536,7 @@ class MainWindow(QMainWindow):
             max_elements=self.max_elements.value(),
             form=self.form.currentData(), coupling=self.coupling.isChecked(),
             sequential=self.sequential.isChecked(),
-            delay=self.delay.value() * 1e-12 or 'off')
+            delay=self.line_delay(), line_z0=self.line_z0.value() or None)
 
     def run(self):
         if self.worker is not None:
@@ -608,7 +639,9 @@ class MainWindow(QMainWindow):
         text = (f'Model ({m.form} form): {m.n_elements()} elements, S-parameter error {m.error_db():.1f} dB rms '
                 f'in the fit band {m.freq[0] / 1e9:.6g} to {m.freq[-1] / 1e9:.6g} GHz.')
         if m.delay:
-            text += f' Line at each port: {m.delay * 1e12:.4g} ps.'
+            text += f' Line at each port: {m.delay * 1e12:.4g} ps, {m.line_z0:.4g} ohm.'
+        if m.line_note:
+            text += '\n' + m.line_note[0].upper() + m.line_note[1:] + '.'
         if warnings:
             text += '\nWarning: ' + '\nWarning: '.join(warnings)
         self.assessment = a = advice.assess(m, self.network, self.data_check)

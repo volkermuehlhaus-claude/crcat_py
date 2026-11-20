@@ -17,6 +17,11 @@ __all__ = ['check', 'DataCheck', 'BranchFacts']
 # reaches the -40 dB limit up to about 45 deg, -36 dB at 60 deg, -24 dB at 90 deg.
 LUMPED_DEG = 45          # up to here a few lumped elements follow a line well
 DISTRIBUTED_DEG = 90     # from here on the part counts as distributed
+# A distributed 2-port gets a line at each port that takes all but this much of its
+# electrical length; the lumped elements model the rest. From fits of a simulated 50 ohm
+# line and of ideal 35, 50 and 70 ohm lines (216 to 230 deg): 15 to 45 deg left gave -36 to
+# -45 dB, 60 deg -34 to -38 dB, nothing left -26 to -42 dB.
+LINE_REST_DEG = 30
 NEGATIVE_SHARE = 0.3     # a branch is unphysical if its real part is negative this often
 K_SHOWN = 0.05           # smallest coupling factor reported
 
@@ -40,13 +45,14 @@ class DataCheck:
     'two-port', 'one-port', 'multi-port'), ``verdict`` ('suited', 'limited', 'not suited'),
     ``reasons``, ``form`` (suggested), ``fmax`` (suggested top frequency in Hz, or None),
     ``srf`` (first self-resonance in Hz, or None), ``line`` (dict with L, C, z0, delay,
-    degrees at the band end, or None), ``branches`` ({form: [BranchFacts]}), ``couplings``
+    degrees at the band end, or None), ``port_line`` (the line at each port that suits a
+    distributed 2-port: dict with z0 and delay, or None), ``branches`` ({form: [BranchFacts]}), ``couplings``
     ([(ports, k)]), ``reciprocity`` and ``passive``."""
 
     def __init__(self):
         self.kind = self.verdict = self.form = None
         self.reasons, self.couplings, self.branches = [], [], {}
-        self.fmax = self.srf = self.line = None
+        self.fmax = self.srf = self.line = self.port_line = None
         self.nports = self.points = 0
         self.band = (0.0, 0.0)
         self.reciprocity = 0.0
@@ -206,6 +212,8 @@ def check(network, fmin=None, fmax=None, target_db=-40.0):
     degrees = c.line['degrees'] if c.line else 0.0
     if c.line and degrees > DISTRIBUTED_DEG:
         c.fmax = float(LUMPED_DEG / degrees * f[-1])
+        c.port_line = {'z0': c.line['z0'],
+                       'delay': c.line['delay'] * (1 - LINE_REST_DEG / degrees) / 2}
     if signif and len(unphys) > max(1, len(signif) // 3):
         c.verdict = 'not suited'
         c.reasons.append(f'{len(unphys)} of {len(signif)} branches of the data have a negative '
@@ -215,7 +223,9 @@ def check(network, fmin=None, fmax=None, target_db=-40.0):
         c.verdict = 'limited'
         c.reasons.append(f'the part is {degrees:.0f} deg long at {f[-1] / 1e9:.4g} GHz, distributed: '
                          f'a few lumped elements follow it well up to about '
-                         f'{c.fmax / 1e9:.3g} GHz ({LUMPED_DEG} deg)')
+                         f'{c.fmax / 1e9:.3g} GHz ({LUMPED_DEG} deg); for the whole band a line of '
+                         f'{c.port_line["z0"]:.3g} ohm and {c.port_line["delay"] * 1e12:.3g} ps at each '
+                         f'port is tried')
     elif left:
         c.verdict = 'limited'
         c.reasons.append('branch ' + ', '.join(b.name for b in left) + ' of the data has a negative '

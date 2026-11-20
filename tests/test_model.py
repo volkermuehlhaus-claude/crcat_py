@@ -475,7 +475,7 @@ def test_line_at_each_port():
     f = np.linspace(0.5e9, 100e9, 120)
     core = make_network(2, TWO_PORT, f=f)
     net = skrf.Network(frequency=core.frequency, s=model.shift_ports(core.s, f, 1.5e-12), z0=50)
-    assert model.extract(net, model.Options(coupling=False)).warnings()   # no pi of few elements
+    assert model.extract(net, model.Options(coupling=False, delay='off')).warnings()   # no pi of few elements
     m = model.extract(net, model.Options(delay=1.5e-12, pick='best'))
     assert m.delay == 1.5e-12 and m.error_db() < -150 and not m.warnings()
     assert [b.chosen.label for b in m.branches] == ['CR3 C', 'CR8 SerRC', 'CR7 SerRL']
@@ -485,7 +485,21 @@ def test_line_at_each_port():
     assert np.allclose(spice_s_parameters(text, f), m.s_matrix(f), atol=1e-9)
     assert 'T_p2 (p2 0 p2_c 0) tline z0=50 td=1.5e-12' in netlist.to_spectre(m, 'dut')
     with pytest.raises(ValueError):
-        model.extract(net, model.Options(delay='auto'))
+        model.extract(net, model.Options(delay='long'))
+    with pytest.raises(ValueError):
+        model.extract(net, model.Options(delay=1e-12, line_z0=-50))
+    # a line of another impedance: taken out and put back with that impedance
+    f2 = np.linspace(0.5e9, 60e9, 80)
+    core = make_network(2, TWO_PORT, f=f2)
+    net = skrf.Network(frequency=core.frequency, z0=50,
+                       s=model.shift_ports(core.s, f2, 2e-12, 75.0, 50.0))
+    assert not np.allclose(net.s, model.shift_ports(core.s, f2, 2e-12))
+    assert np.allclose(model.shift_ports(net.s, f2, -2e-12, 75.0, 50.0), core.s)
+    m = model.extract(net, model.Options(delay=2e-12, line_z0=75.0, pick='best'))
+    assert m.line_z0 == 75 and m.error_db() < -150 and m.to_dict()['line_z0'] == 75
+    text = netlist.to_spice(m, 'dut')
+    assert 'T_p1 p1 0 p1_c 0 Z0=75 TD=2e-12' in text
+    assert 'tline z0=75 td=2e-12' in netlist.to_spectre(m, 'dut')
 
 
 # --- command line -----------------------------------------------------------------------

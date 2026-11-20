@@ -77,6 +77,47 @@ def test_check_not_suited():
     assert '3 of 6 branches' in c.reasons[0]
 
 
+# --- automatic line at the ports ---------------------------------------------------------------
+
+def test_automatic_line_for_a_distributed_part():
+    f = np.linspace(0.5e9, 100e9, 120)
+    net = line(70.0, 6e-12, f, loss=0.01)                  # 216 deg at 100 GHz, not 50 ohm
+    c = check.check(net)
+    assert abs(c.port_line['z0'] - 70) < 2
+    assert abs(c.port_line['delay'] - 6e-12 * (1 - 30 / 216) / 2) < 0.1e-12
+    assert 'at each port is tried' in c.reasons[0]
+    m = model.extract(net, model.Options(coupling=False))  # delay 'auto' is the default
+    assert m.delay == c.port_line['delay'] and m.line_z0 == c.port_line['z0']
+    assert m.error_db() < -30 and 'chosen automatically' in m.line_note
+    assert m.line_note in m.summary()
+    assert advice.assess(m, net, c).level in ('good', 'fair')
+    assert f'Z0={m.line_z0:.6g} TD={m.delay:.6g}' in netlist.to_spice(m, 'x')
+    # a part that is short in the band gets no line, and neither does 'off'
+    assert check.check(net, fmax=30e9).port_line is None
+    short = model.extract(net, model.Options(coupling=False, fmax=30e9))
+    assert short.delay == 0 and short.line_note == ''
+
+
+def test_automatic_line_is_dropped_when_it_does_not_help(monkeypatch):
+    # the check proposes a line of a wrong impedance: the model without it is kept
+    f = np.linspace(0.5e9, 100e9, 120)
+    net = line(50.0, 6e-12, f, loss=0.01)
+    real = check.check
+
+    def wrong(*args, **kwargs):
+        c = real(*args, **kwargs)
+        c.port_line = {'z0': 8.0, 'delay': 0.2e-12}
+        return c
+    monkeypatch.setattr(check, 'check', wrong)
+    m = model.extract(net, model.Options(coupling=False, max_elements=2, refine=False))
+    plain = model.extract(net, model.Options(coupling=False, max_elements=2, refine=False,
+                                             delay='off'))
+    if m.delay:                                  # kept only if it is the better one
+        assert m.error() < plain.error() and 'without it' in m.line_note
+    else:
+        assert np.isclose(m.error(), plain.error()) and m.line_note.startswith('no line')
+
+
 # --- verdict and suggestions ----------------------------------------------------------------
 
 def test_assess_good():
@@ -94,13 +135,13 @@ def test_assess_suggests_a_band_for_a_line():
     f = np.linspace(0.5e9, 100e9, 120)
     net = line(50.0, 6e-12, f, loss=0.01)
     looked = check.check(net)
-    m = model.extract(net, model.Options(coupling=False))
+    m = model.extract(net, model.Options(coupling=False, delay='off'))
     a = advice.assess(m, net, looked)
     assert a.level == 'poor' and a.suggestions
     s = a.suggestions[0]
     assert s.label.startswith('Fit to ') and 10e9 < s.changes['fmax'] < 35e9
     # taking the suggestion gives a model that is not poor any more
-    opt = model.Options(coupling=False, **s.changes)
+    opt = model.Options(coupling=False, delay='off', **s.changes)
     again = model.extract(net, opt)
     assert advice.assess(again, net).level in ('good', 'fair')
     assert again.error() < 0.2 * m.error()
@@ -181,7 +222,7 @@ def test_testbench_text():
     assert 'PORT2 (p2 0) port r=50 num=2' in text and 'sp1 sp ports=[PORT1 PORT2]' in text
 
 
-@pytest.mark.parametrize('case', ['pi', 'coupled', 'line'])
+@pytest.mark.parametrize('case', ['pi', 'coupled', 'line', 'auto line'])
 def test_netlist_in_ngspice(case, tmp_path):
     """The written netlist, simulated by ngspice, gives the S-parameters of the model."""
     exe = find_ngspice()
@@ -193,6 +234,10 @@ def test_netlist_in_ngspice(case, tmp_path):
         m = model.extract(make_transformer(0.3e-9, 0.3e-9, -0.4, 1.0, 1.0, rc=0.5),
                           model.Options(form='pi', pick='best'))
         assert m.couplings
+    elif case == 'auto line':
+        m = model.extract(line(70.0, 6e-12, np.linspace(0.5e9, 100e9, 120), loss=0.01),
+                          model.Options(coupling=False))
+        assert m.delay and m.line_z0 != 50
     else:
         f = np.linspace(0.5e9, 100e9, 120)
         core = make_network(2, TWO_PORT, f=f)
@@ -202,4 +247,4 @@ def test_netlist_in_ngspice(case, tmp_path):
     (tmp_path / 'tb.sp').write_text(testbench.ngspice(m, 'dut.sp', 'dut'), encoding='utf-8')
     f, s = testbench.run_ngspice(tmp_path / 'tb.sp', exe)
     assert np.allclose(f, m.freq, rtol=1e-6)
-    assert np.abs(s - m.s_matrix(m.freq)).max() < 1e-6
+    assert np.abs(s - m.s_matrix(m.freq)).max() < 1e-5      # the netlist has six digits

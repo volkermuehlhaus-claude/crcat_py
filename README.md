@@ -158,7 +158,9 @@ data check: 2 port(s), 0.275 to 110 GHz, 400 points: line, self-resonance at 44.
   the impedance sqrt(L / C) of the part seen as a line. A few lumped elements follow a line
   well while it is short: in fits of an ideal and of a simulated 50 ohm line the -40 dB
   limit was reached up to about 45 degrees, -36 dB at 60 degrees and -24 dB at 90 degrees.
-  From 90 degrees on the check says "limited" and names the frequency of 45 degrees.
+  From 90 degrees on the check says "limited", names the frequency of 45 degrees, and
+  names the line that the fit will try for the whole band, see
+  [Line at the ports](#line-at-the-ports-for-a-distributed-part).
 - **Form.** Branches whose data have a negative real part or a negative inductance cannot
   be made of positive elements. The check counts them for the pi and the tee form and
   names the form that fits, a magnetic coupling that coupled coils can take, or "not
@@ -192,6 +194,53 @@ limit, of the choice or of the elements per branch in the window picks again fro
 candidates at once; only band, element signs, form, line, coupled coils, refinement and
 sequential need a new run. In Python: `model.tradeoff()`, `model.apply(point)`,
 `model.reselect(options)`.
+
+### Line at the ports for a distributed part
+
+A few lumped elements cannot follow a part that is long against the wavelength. A piece of
+line can: the tool then puts a line at each port and models only what is left between the
+lines with lumped elements.
+
+```
+port 1 --[ line ]--+-- lumped model --+--[ line ]-- port 2
+```
+
+This happens by itself (`--delay auto`, the default), and only when it is needed:
+
+- **When.** Only for a 2-port that the data check finds longer than 90 degrees at the top of
+  the fit band. Inductors, capacitors and short parts get no line and the same model as
+  before.
+- **Which line.** Its impedance is that of the part, sqrt(L / C) from the low-frequency L
+  and C, not the reference impedance. The two lines together take all but 30 degrees of
+  the electrical length; the lumped elements model the rest.
+- **Check.** If the model with lines misses the limits, the model without lines is made too
+  and the one with the lower error is kept. The result says which one it is and why.
+
+Example, the 880 um line of the data check above over its full band, 0.275 to 110 GHz
+(230 degrees):
+
+```
+p1 - gnd   CR8 SerRC           -47.3 dB  X  0.218 %  loss  0.518 %  R=60.03Ohm C=5.857fF
+p2 - gnd   CR8 SerRC           -47.3 dB  X  0.218 %  loss  0.518 %  R=60.03Ohm C=5.857fF
+p1 - p2    CR7 SerRL refined   -43.8 dB  X   8.76 %  loss     16 %  R=3.232Ohm L=28.11pH
+line at each port: 2.528 ps, 50.78 ohm
+line at each port chosen automatically (2.53 ps, 50.8 ohm): the part is distributed
+model (pi form): 8 elements, S-parameter error -39.4 dB rms, -34.1 dB max
+```
+
+Without the lines (`--delay off`) the best lumped model of this band is at -4.3 dB.
+
+![line at the ports in crcat-gui](doc/gui_line.png)
+
+The two rules come from fits of this line and of ideal 35, 50 and 70 ohm lines of 216
+degrees. With the part's impedance and 15 to 45 degrees left, the models were at -36 to
+-45 dB. With 60 degrees left they were at -34 to -38 dB, and with nothing left between
+-26 and -42 dB. A 50 ohm line taken from the 70 ohm line left -16 to -20 dB.
+
+The line is lossless: the loss of the part goes into the lumped elements. In the netlist
+it is a `T` element (Spectre `tline`), which not every simulator setup accepts in every
+analysis; `--delay off` gives a model of R, L, C only. `--delay` with a number (ps) and
+`--line-z0` (ohm) set a known feed line by hand, for any number of ports.
 
 ### Testbench
 
@@ -321,7 +370,8 @@ Main options (`crcat-netlist --help` lists all):
 | `--sequential` | pi form: fit the branches to ground to the port admittance minus the models, not the data, of the branches between ports |
 | `--no-coupling` | never use coupled coils |
 | `--check-only` | print the data check and stop |
-| `--delay` (ps) | a line of the reference impedance and this delay at each port: removed from the data before the fit, written as a `T` element (Spectre `tline`) |
+| `--delay auto`, `off`, or ps | line at each port, removed from the data before the fit, written as a `T` element (Spectre `tline`). auto (default): only for a distributed 2-port, see above; a number: this delay |
+| `--line-z0` (ohm) | impedance of the line of a given `--delay` (default: the reference impedance) |
 
 Limits:
 
@@ -329,10 +379,9 @@ Limits:
   narrower band.
 - **Distributed parts.** A structure that is not small against the wavelength, or a net of
   strongly coupled conductors, is not a pi of small branches: for a 6-port feed structure
-  12 of 21 branches of the data had a negative real part even below 40 GHz. `--delay`
-  takes a known feed line out; there is no automatic search for it (a search by how
-  physical the branches become was not reliable, since a short line is the same as a
-  series L and a shunt C, which the lumped elements cover).
+  12 of 21 branches of the data had a negative real part even below 40 GHz. The automatic
+  line at the ports is for 2-ports only; with more ports, `--delay` takes a known feed
+  line out.
 - **Tee form for 2-ports only.** A tee has too few branches for a general n-port.
 - **One coupling factor per coil pair,** see above; and coupled loss that needs a negative
   resistance stays out unless `--require any`.
