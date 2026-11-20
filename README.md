@@ -42,8 +42,10 @@ Best passive models:
   ...
 ```
 
-The data are a Sonnet netlist simulation of network XXXII-39 (CR500), so the search finds
-it and its equivalent networks with the exact element values. `--fit` selects the data:
+The data are the Y-parameters of network XXXII-39 (CR500) with known element values
+(La 0.5 nH, Lb 0.4 nH, Rc 10 ohm, Ld 0.2 nH, Cd 3 pF), computed by a circuit simulator:
+the file is CRCat's test data, made with Sonnet's netlist (not EM) simulation. So the
+search should find that network and its equivalents with exactly these values, and it does. `--fit` selects the data:
 `y11` (pi-model admittance port 1 to ground, default), `y21` (pi-model admittance between
 ports 1 and 2), `z11` / `z21` (tee model), `Y11`, `Z11`, `S11` (the parameter itself). A
 leading number fits only the first frequencies, e.g. `--fit 200y11`. `crcat-seed --help`
