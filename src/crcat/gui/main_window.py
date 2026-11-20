@@ -397,8 +397,9 @@ class MainWindow(QMainWindow):
         self.model = None
         self.save_button.setEnabled(False)
         self.clear_results()
-        if new_file:                                 # the band of another file means nothing here
-            self.reset_band()
+        if new_file:                                 # the frequencies of another file mean
+            self.reset_band()                        # nothing here: band and target cleared
+            self.ftarget.setValue(0)
         f = self.network.f[self.network.f > 0]       # what an empty band field stands for
         self.fmin.setPlaceholderText(f'{f.min() / 1e9:.4g}' if f.size else 'data')
         self.fmax.setPlaceholderText(f'{f.max() / 1e9:.4g}' if f.size else 'data')

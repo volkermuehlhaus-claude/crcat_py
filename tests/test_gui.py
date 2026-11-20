@@ -110,8 +110,12 @@ def test_gui_extract_and_save(app, tmp_path):
     other = tmp_path / 'other.s2p'
     make_network(2, TWO_PORT).write_touchstone(str(other.with_suffix('')))
     win.fmax.setValue(20)
-    assert win.set_file(src) and win.fmax.value() == 20
+    win.fmin.setValue(1)
+    win.ftarget.setValue(10)
+    assert win.set_file(src) and (win.fmin.value(), win.fmax.value(), win.ftarget.value()) == (1, 20, 10)
     assert win.set_file(other) and win.fmax.value() == 0 and win.fmax.text() == ''
+    assert win.fmin.value() == 0 and win.ftarget.value() == 0 and win.ftarget.text() == ''
+    assert win.options().fmin is None and win.options().ftarget is None
     assert win.table.rowCount() == 0 and win.netlist_view.toPlainText() == ''
     assert win.marker_f is None and win.readout.toPlainText() == ''
     assert not win.figure.axes and not win.save_button.isEnabled()
