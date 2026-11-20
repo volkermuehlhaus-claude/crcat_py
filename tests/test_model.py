@@ -215,13 +215,21 @@ def test_plot_views():
     fig = plots.compare(m, net)                                    # fit band only
     assert fig.axes[0].get_xlim()[1] < 45 and 'shaded' not in fig.axes[0].get_title()
     labels = [t.get_text() for t in fig.legends[0].get_texts()]
-    assert labels == ['S11 = S22', 'S21']                          # coinciding traces merged
+    assert labels == ['S11 = S22', 'S21', 'data', 'model']        # coinciding traces merged
+    r = fig.crcat_readout                                          # readout for a marker
+    i = r.index(10.0)
+    assert abs(r.f[i] - 10) < 0.5
+    text = r.text(i)
+    assert text.startswith('f = ') and 'S21: data' in text and 'deg, model' in text
     fig = plots.compare(m, net, view='s', all_data=True)
     assert fig.axes[0].get_xlim()[1] > 55 and 'fit band shaded' in fig.axes[0].get_title()
     fig = plots.compare(m, net, view='error')
     assert any('limit -40 dB' == t.get_text() for t in fig.legends[0].get_texts())
     fig = plots.compare(m, net, view='lrq')
     assert [ax.get_ylabel() for ax in fig.axes] == ['series L (pH)', 'series R (ohm)', 'Q at port 1']
+    text = fig.crcat_readout.text(0)
+    assert 'series L: data' in text and ' pH, model' in text and 'Q at port 1: data' in text
+    assert 'model' in plots.compare(m, net, view='error').crcat_readout.text(3)
     # a flat curve keeps a margin to the frame, and one outlier does not set the scale
     lo, hi = plots._limits(np.full(50, 73.6))
     assert lo == 0 and 80 < hi < 95
@@ -244,7 +252,7 @@ def test_plot_views():
     plots.MAX_TRACES, keep = 3, plots.MAX_TRACES
     try:
         fig = plots.compare(m3, three)
-        assert len(fig.legends[0].get_texts()) == 3 and 'largest error' in fig.axes[0].get_title()
+        assert len(fig.legends[0].get_texts()) == 3 + 2 and 'largest error' in fig.axes[0].get_title()
     finally:
         plots.MAX_TRACES = keep
 

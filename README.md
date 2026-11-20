@@ -119,12 +119,15 @@ pair with their coupling factor:
 
 | View | Shows | File |
 |---|---|---|
-| S-parameters | magnitude and phase, data (wide) and model (thin) | `_crcat.png` |
+| S-parameters | magnitude and phase, data (thin line with circles) and model (solid line) | `_crcat.png` |
 | Error | \|S model - S data\| of each S-parameter against frequency, with the limit | `_crcat_error.png` |
 | L (or C), R, Q | 2-ports: series L or C and series R from -1/Y21, Q from 1/Y11 | `_crcat_lrq.png` |
 
 The plots show the fit band; "All data" in the window (`--plot-all-data`) shows every
-frequency of the data with the fit band shaded. S-parameters that coincide are drawn once
+frequency of the data with the fit band shaded. In the window, a click or drag in the plot
+sets a marker; the readout under the plot lists data and model of every curve there (in
+the S-parameter view also their difference), and the left / right arrow keys move the
+marker by one frequency point. The marker stays at its frequency when the view changes. S-parameters that coincide are drawn once
 ("S11 = S22"). With more than 8 different S-parameters, the 8 with the largest error are
 drawn. The Error view does not depend on the axis scale or on how small an S-parameter is;
 the L, R, Q view shows what an inductor or capacitor is judged by.

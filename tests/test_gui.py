@@ -69,6 +69,18 @@ def test_gui_extract_and_save(app, tmp_path):
     assert 'shaded' not in win.figure.axes[0].get_title()
     win.all_data.setChecked(True)
     assert 'fit band shaded' in win.figure.axes[0].get_title()
+    # marker: readout of all curves, kept across a change of view, moved by steps
+    win.view.setCurrentIndex(win.view.findData('s'))
+    text = win.set_marker(12.0)
+    assert text.startswith('f = ') and 'S21: data' in text
+    assert win.readout.toPlainText() == text
+    assert all(len(ax.lines) for ax in win.figure.axes) and len(win.marker_lines) == 2
+    f0 = win.marker_f
+    win.step_marker(1)
+    assert win.marker_f > f0
+    win.view.setCurrentIndex(win.view.findData('lrq'))
+    assert win.marker_f > f0 and 'series L: data' in win.readout.toPlainText()
+    assert len(win.marker_lines) == 3
     assert win.table.columnCount() == 6 and win.table.item(2, 3).text().endswith('%')
     assert win.table.item(2, 4).text().endswith('%')
     win.format.setCurrentIndex(win.format.findData('spectre'))
@@ -81,6 +93,7 @@ def test_gui_extract_and_save(app, tmp_path):
     assert win.set_file(src) and win.fmax.value() == 20
     assert win.set_file(other) and win.fmax.value() == 0 and win.fmax.text() == 'data'
     assert win.table.rowCount() == 0 and win.netlist_view.toPlainText() == ''
+    assert win.marker_f is None and win.readout.toPlainText() == ''
     assert not win.figure.axes and not win.save_button.isEnabled()
     win.fmin.setValue(5)
     win.full_range.click()

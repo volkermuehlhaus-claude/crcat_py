@@ -4,11 +4,59 @@ pyplot, so the GUI and the command line can both use them).
 Views: 's' (magnitude and phase of the S-parameters), 'error' (|S model - S data| of each
 S-parameter against frequency, with the error limit) and 'lrq' (2-ports: series L or C,
 series R and Q, the quantities an inductor or capacitor is judged by).
+
+Data are drawn as a thin line with open circles, the model as a solid line on top. Every
+figure made here carries a :class:`Readout` (``fig.crcat_readout``): the values of all
+curves at a frequency, for a marker.
 """
+
+
+class Readout:
+    """Values of the plotted curves at a frequency: ``text(index)``, ``index(f_ghz)``."""
+
+    def __init__(self, f_ghz):
+        self.f = np.asarray(f_ghz, dtype=float)
+        self.rows = []                               # (label, function index -> text)
+
+    def add(self, label, fmt):
+        self.rows.append((label, fmt))
+
+    def index(self, f_ghz):
+        return int(np.argmin(np.abs(self.f - f_ghz)))
+
+    def text(self, i):
+        lines = [f'f = {self.f[i]:.6g} GHz']
+        lines += [f'{label}: {fmt(i)}' for label, fmt in self.rows]
+        return '\n'.join(lines)
+
+
+def _markevery(n):
+    return max(1, n // DATA_MARKERS)
+
+
+def _pair(ax, x, d, m, color, label=None):
+    """Data (thin line, open circles) and model (solid line on top) in one color."""
+    ax.plot(x, d, color=color, lw=0.8, alpha=0.6, marker='o', markersize=4.5,
+            markerfacecolor='none', markeredgewidth=0.9, markevery=_markevery(len(x)), zorder=2)
+    ax.plot(x, m, color=color, lw=1.6, label=label, zorder=3)
+
+
+def _style_legend(ax):
+    """Two black entries that explain the line styles."""
+    ax.plot([], [], color='k', lw=0.8, marker='o', markersize=4.5, markerfacecolor='none',
+            label='data')
+    ax.plot([], [], color='k', lw=1.6, label='model')
+
+
+def _fmt(v, unit='', digits=4):
+    return 'n/a' if not np.isfinite(v) else f'{v:.{digits}g}{unit}'
+
 
 import numpy as np
 
-__all__ = ['compare', 'VIEWS', 'views_for', 'MAX_TRACES', 'series_quantities']
+__all__ = ['compare', 'VIEWS', 'views_for', 'MAX_TRACES', 'series_quantities', 'Readout']
+
+DATA_MARKERS = 30       # open circles per data trace, about
 
 VIEWS = {'s': 'S-parameters', 'error': 'Error', 'lrq': 'L (or C), R, Q'}
 MAX_TRACES = 8          # with more S-parameters, only the ones with the largest error
@@ -67,7 +115,7 @@ def _finish(fig, axes, model, f, title, all_data, legend_ax=None):
             fig.legend(handles, labels, loc='lower center', ncol=min(len(labels), 5), fontsize=8,
                        frameon=False)
             rows = -(-len(labels) // 5)
-            fig.subplots_adjust(bottom=0.11 + 0.045 * rows)
+            fig.subplots_adjust(bottom=0.15 + 0.05 * rows)
 
 
 def _view_s(fig, model, network, all_data):
@@ -75,16 +123,26 @@ def _view_s(fig, model, network, all_data):
     fg = f / 1e9
     ax1, ax2 = fig.subplots(2, 1, sharex=True)
     traces, left_out = _traces(model, s_data, s_model)
+    readout = Readout(fg)
     for k, (label, i, j) in enumerate(traces):
         color = f'C{k % 10}'
+        sd, sm = s_data[:, i, j], s_model[:, i, j]
         with np.errstate(divide='ignore'):
-            ax1.plot(fg, 20 * np.log10(np.abs(s_data[:, i, j])), color=color, lw=3.5, alpha=0.35)
-            ax1.plot(fg, 20 * np.log10(np.abs(s_model[:, i, j])), color=color, lw=1.2, label=label)
-        ax2.plot(fg, np.degrees(np.angle(s_data[:, i, j])), color=color, lw=3.5, alpha=0.35)
-        ax2.plot(fg, np.degrees(np.angle(s_model[:, i, j])), color=color, lw=1.2)
+            _pair(ax1, fg, 20 * np.log10(np.abs(sd)), 20 * np.log10(np.abs(sm)), color, label)
+        _pair(ax2, fg, np.degrees(np.angle(sd)), np.degrees(np.angle(sm)), color)
+
+        def fmt(n, sd=sd, sm=sm):
+            with np.errstate(divide='ignore'):
+                d, m = 20 * np.log10(abs(sd[n])), 20 * np.log10(abs(sm[n]))
+            return (f'data {d:7.2f} dB {np.degrees(np.angle(sd[n])):7.1f} deg, '
+                    f'model {m:7.2f} dB {np.degrees(np.angle(sm[n])):7.1f} deg, '
+                    f'|difference| {20 * np.log10(max(abs(sm[n] - sd[n]), 1e-300)):6.1f} dB')
+        readout.add(label, fmt)
+    fig.crcat_readout = readout
+    _style_legend(ax1)
     ax1.set_ylabel('magnitude (dB)')
     ax2.set_ylabel('phase (deg)')
-    title = f'wide: data, thin: model ({model.n_elements()} elements, {model.error_db():.1f} dB)'
+    title = f'circles: data, lines: model ({model.n_elements()} elements, {model.error_db():.1f} dB)'
     if left_out:
         title += f'; the {len(traces)} S-parameters with the largest error'
     _finish(fig, (ax1, ax2), model, f, title, all_data, ax1)
@@ -95,10 +153,13 @@ def _view_error(fig, model, network, all_data):
     fg = f / 1e9
     ax = fig.subplots()
     traces, left_out = _traces(model, s_data, s_model)
+    readout = Readout(fg)
     for k, (label, i, j) in enumerate(traces):
         with np.errstate(divide='ignore'):
-            ax.plot(fg, 20 * np.log10(np.abs(s_model[:, i, j] - s_data[:, i, j])),
-                    color=f'C{k % 10}', lw=1.2, label=label)
+            e = 20 * np.log10(np.abs(s_model[:, i, j] - s_data[:, i, j]))
+        ax.plot(fg, e, color=f'C{k % 10}', lw=1.4, label=label)
+        readout.add(label, lambda n, e=e: f'|S model - S data| {e[n]:6.1f} dB')
+    fig.crcat_readout = readout
     ax.axhline(model.options.target_db, color='k', ls='--', lw=1,
                label=f'limit {model.options.target_db:g} dB')
     lo = min(model.options.target_db - 40, -80)
@@ -145,10 +206,14 @@ def _view_lrq(fig, model, network, all_data):
         rows += [(ax2, zs_d.real, zs_m.real, 'series R (ohm)'),
                  (ax3, np.abs(zin_d.imag) / zin_d.real, np.abs(zin_m.imag) / zin_m.real,
                   'Q at port 1')]
+    readout = Readout(fg)
     for ax, d, m, label in rows:
-        ax.plot(fg, d, color='C0', lw=3.5, alpha=0.35, label='data')
-        ax.plot(fg, m, color='C0', lw=1.2, label='model')
+        _pair(ax, fg, d, m, 'C0')
         ax.set_ylabel(label)
+        name, _, unit = label.partition(' (')
+        unit = ' ' + unit.rstrip(')') if unit else ''
+        readout.add(name, lambda n, d=d, m=m, unit=unit:
+                    f'data {_fmt(d[n], unit)}, model {_fmt(m[n], unit)}')
         ok = np.isfinite(d) & in_band                # scale to the data in the fit band
         if ok.any():
             pos = d[ok][d[ok] > 0]
@@ -157,8 +222,10 @@ def _view_lrq(fig, model, network, all_data):
                 ax.set_ylim(pos.min() / 2, pos.max() * 2)
             else:
                 ax.set_ylim(*_limits(d[ok]))
+    fig.crcat_readout = readout
+    _style_legend(ax1)
     _finish(fig, (ax1, ax2, ax3), model, f,
-            'from -1/Y21 (series) and 1/Y11 (Q); wide: data, thin: model',
+            'from -1/Y21 (series) and 1/Y11 (Q); circles: data, lines: model',
             all_data, ax1)
 
 

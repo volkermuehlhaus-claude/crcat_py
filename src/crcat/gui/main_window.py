@@ -181,6 +181,19 @@ class MainWindow(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.addLayout(row_plot)
         right_layout.addWidget(self.canvas, 1)
+        self.readout = QPlainTextEdit(readOnly=True)
+        self.readout.setFont(mono)
+        self.readout.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.readout.setFixedHeight(96)
+        self.readout.setPlaceholderText('Click in the plot for a marker; left / right arrow keys '
+                                        'move it by one frequency point.')
+        right_layout.addWidget(self.readout)
+        self.marker_f = None                     # marker frequency (GHz), kept across redraws
+        self.marker_lines = []
+        self.canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.canvas.mpl_connect('button_press_event', self._on_click)
+        self.canvas.mpl_connect('motion_notify_event', self._on_drag)
+        self.canvas.mpl_connect('key_press_event', self._on_key)
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(left)
         split.addWidget(right)
@@ -242,6 +255,9 @@ class MainWindow(QMainWindow):
         """Empty table, schematic, netlist and plot (a new file or no model)."""
         self.table.setRowCount(0)
         self.netlist_view.clear()
+        self.readout.clear()
+        self.marker_f = None
+        self.marker_lines = []
         for fig, canvas in ((self.schematic, self.schematic_canvas), (self.figure, self.canvas)):
             fig.clear()
             canvas.draw_idle()
@@ -364,7 +380,51 @@ class MainWindow(QMainWindow):
             self.view.blockSignals(False)
         compare(self.model, self.network, self.figure, self.view.currentData(),
                 self.all_data.isChecked())
+        self.marker_lines = []
+        if self.marker_f is not None:
+            self.set_marker(self.marker_f)
+        else:
+            self.readout.clear()
         self.canvas.draw_idle()
+
+    # --- marker -------------------------------------------------------------------------
+
+    def set_marker(self, f_ghz):
+        """Put the marker at the data point nearest to f_ghz; returns the readout text."""
+        readout = getattr(self.figure, 'crcat_readout', None)
+        if readout is None or not readout.f.size:
+            return ''
+        i = readout.index(f_ghz)
+        self._marker_index = i
+        self.marker_f = float(readout.f[i])
+        if not self.marker_lines:
+            self.marker_lines = [ax.axvline(self.marker_f, color='k', lw=0.9, ls=':', zorder=5)
+                                 for ax in self.figure.axes]
+        for line in self.marker_lines:
+            line.set_xdata([self.marker_f, self.marker_f])
+        text = readout.text(i)
+        self.readout.setPlainText(text)
+        self.canvas.draw_idle()
+        return text
+
+    def step_marker(self, steps):
+        readout = getattr(self.figure, 'crcat_readout', None)
+        if readout is None or self.marker_f is None:
+            return
+        i = min(max(self._marker_index + steps, 0), readout.f.size - 1)
+        self.set_marker(readout.f[i])
+
+    def _on_click(self, event):
+        if event.inaxes is not None and event.button == 1 and event.xdata is not None:
+            self.set_marker(event.xdata)
+
+    def _on_drag(self, event):
+        if event.inaxes is not None and event.button == 1 and event.xdata is not None:
+            self.set_marker(event.xdata)
+
+    def _on_key(self, event):
+        if event.key in ('left', 'right'):
+            self.step_marker(-1 if event.key == 'left' else 1)
 
     def schematic_row(self):
         """The result row whose schematic is shown (the selected one), or None."""
