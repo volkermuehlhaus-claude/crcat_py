@@ -44,8 +44,11 @@ the [FAQ](doc/FAQ.md).
   - [Options](#options)
 - [Searching the catalog for one branch](#searching-the-catalog-for-one-branch)
 - [Schematics](#schematics)
-- [What is ported](#what-is-ported)
-  - [Differences from CRCat](#differences-from-crcat)
+- [CRCat and this package](#crcat-and-this-package)
+  - [Ported from CRCat](#ported-from-crcat)
+  - [Where the port behaves differently](#where-the-port-behaves-differently)
+  - [Added: not in CRCat](#added-not-in-crcat)
+  - [Missing](#missing)
 - [The catalog](#the-catalog)
   - [How it was converted](#how-it-was-converted)
   - [Validation](#validation)
@@ -670,7 +673,12 @@ terminal on the left to ground on the right:
 Element values are printed for a `Component`, names only for a network. Networks of the
 custom catalog whose name does not start with a known topology have no layout, as in CRCat.
 
-## What is ported
+## CRCat and this package
+
+Three questions are answered here: what of CRCat is in this package, what this package does
+that CRCat does not, and what is missing.
+
+### Ported from CRCat
 
 | CRCat (MATLAB) | crcat |
 |---|---|
@@ -679,16 +687,20 @@ custom catalog whose name does not start with a known topology have no layout, a
 | `CRFitAuto`, `CRInterp` | `crcat.fitauto.fit_auto`, `interpolate` |
 | `@CRCat` (catalog, `Relationship`, `NetworkRelations`, `FindOrder`) | `crcat.catalog` |
 | `CRComp` (`Eval`, `Fit`, `Transform`, `IsGain`, `ElementValues`) | `crcat.component.Component` |
-| `CRSeed`, `CRSeedAddNoise` | `crcat.seed.seed`, `crcat-seed` |
+| `CRSeed`, `CRSeedAddNoise`, `PlotResult` | `crcat.seed.seed`, `SeedResult.plot`, `crcat-seed` |
 | `CRSprout` | `crcat.sprout.sprout` |
 | `CRCat.Draw`, `DrawArray`, `DrawRLC` | `crcat.draw` (`figure`, `figure_array`, `draw_network`) |
 | `SnP` (`Get`, `Pull`, `AddNoise`) | scikit-rf, `crcat.data.pull`, `seed(noise_floor_db=...)` |
-| (not in CRCat, this branch) | `crcat.model.extract`, `crcat.netlist`, `crcat.schematic`, `crcat-netlist`, `crcat-gui` |
 
-Not ported: generating the catalog and its equations (`FillCat_*`, MATLAB `solve`),
-`CRFitClean`, and the interactive prompts of `CRSeed`. Networks can therefore not be added to the custom catalog in Python yet.
+The branch `matlab-port` holds this part alone. Its tests compare with CRCat's README
+example and with the MATLAB tests `CRCompTest.m`, `CRSproutTest.m` and `CRFitAutoTest.m`.
+The rational fit was also run on the stress-test data of the paper (10,000 points, 0.01 to
+100 GHz): with 350 + 350 coefficients and 500 digits the error is 3.135377e-03, against
+3.135303e-03 listed in `CRFitStressTest.m`.
 
-### Differences from CRCat
+### Where the port behaves differently
+
+These are deliberate, and each one is a fix or a consequence of leaving MATLAB:
 
 - **More networks fit.** The normal equations of the rational fit span many decades when
   frequencies are in Hz. CRCat's solver declares some of them singular (code -3; the README
@@ -711,8 +723,56 @@ Not ported: generating the catalog and its equations (`FillCat_*`, MATLAB `solve
 - **The default catalog** is base + custom without the transforms between base and custom
   networks (CRCat recomputes those).
 - The 35 base networks whose synthesis equations are all zero are treated as having none.
-- Added on this branch: the filter for models with positive real element values
-  (`best(physical=True)`).
+- **Arithmetic:** mpmath instead of MATLAB's variable precision arithmetic, with gmpy2 as
+  an optional faster backend.
+
+### Added: not in CRCat
+
+CRCat fits one admittance at a time and ranks the networks. Everything that turns a
+Touchstone file into a usable circuit model is new here (branch `main` only):
+
+| What | Where | In short |
+|---|---|---|
+| A model of a whole n-port | `crcat.model.extract` | Branches from each port to ground and between the ports (pi form), the tee form for 2-ports, coupled coils for magnetic coupling, lines at the ports for distributed parts. |
+| Judging by what a designer needs | `crcat.model` | Each candidate is judged in the whole circuit: S-parameter error, and reactance and loss at the ports. CRCat ranks by the fit error of the one admittance. |
+| Choice of the network | `Options.pick`, `--quality` | The fewest elements within the limits, or the lowest error; positive element values by default (`seed` got the same filter, `best(physical=True)`). |
+| Refinement | `crcat.model` | Bounded least-squares fit of the element values on all error measures (SciPy); CRCat stops at the closed-form synthesis. |
+| Target frequency | `Options.ftarget` | Tighter limits around the frequency where the part is used. |
+| Data check | `crcat.check` | Before the fit: kind of part, electrical length, form, DC region at the low end, "not suited". |
+| Verdict and suggestions | `crcat.advice` | good / fair / poor with L, Q of model and data, and what to change. |
+| DC behaviour | `crcat.dc` | No leakage path where the data have none; the DC paths of the model; a resistor at nodes without a DC path. |
+| Netlists and testbench | `crcat.netlist`, `crcat.testbench` | SPICE and Spectre subcircuits, with a testbench that reproduces the S-parameters. |
+| Plots and schematics of a model | `crcat.plots`, `crcat.schematic` | Data against model (S-parameters, error, L/C, R, Q, size against accuracy); the whole model as one circuit. |
+| Commands | `crcat-netlist`, `crcat-gui` (`crcat.gui`) | Terminal command and a small window; the core imports neither Qt nor matplotlib. |
+
+Two tools came with the port and have no counterpart in CRCat either, because CRCat has
+MATLAB for it: `tools/mupad_decode.py` and `tools/convert_mat.py` read the catalog from
+CRCat's `.mat` files without MATLAB, and `tools/validate_catalog.py` checks every network
+against a nodal analysis of its netlist (see [The catalog](#the-catalog)).
+
+### Missing
+
+Of CRCat:
+
+- **Building the catalog** (`FillCat_*`, MATLAB `solve`). The synthesis equations are read
+  from CRCat's files, not derived. Networks can therefore not be added to the custom
+  catalog in Python.
+- **`CRFitClean`**, which sets positive real parts of poles and zeros to zero.
+- **The interactive prompts of `CRSeed`**; `crcat-seed` takes options instead.
+- **`CRFitTest.m` and `CRFitStressTest.m` as tests.** The stress test was run by hand on
+  the paper's data (see above), not as part of the test suite.
+
+Of the netlist tool (see also the limits under [Options](#options)):
+
+- **More than five elements per branch.** A branch is one catalog network. Parts with many
+  resonances in the band (filters, a stub over several resonances) do not fit.
+- **Coupled lines, rings of lines, several ports on one conductor.** These are not a set of
+  simple branches; the data check says "not suited".
+- **A line for a 1-port.** An open stub is a line with an open end; the automatic line at
+  the ports exists for two and more ports only.
+- **The whole model as one schematic for three and more ports.**
+- **Spectre:** netlist and testbench are written, but have not been run in Spectre.
+- **snp2le:** the planned output option there is not built.
 
 ## The catalog
 
