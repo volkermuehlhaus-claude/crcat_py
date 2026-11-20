@@ -93,8 +93,9 @@ terminal on the left to ground on the right:
 Element values are printed for a `Component`, names only for a network. Networks of the
 custom catalog whose name does not start with a known topology have no layout, as in CRCat.
 
-The `netlist-tool` branch of this repository builds on this port: from S-parameters to a
-SPICE/Spectre netlist, with a small GUI.
+This is the `matlab-port` branch: the port of the MATLAB CRCat by itself, kept as close to
+the original as possible. The `main` branch of this repository builds on it: from
+S-parameters to a SPICE/Spectre netlist, at the command line or in a small window.
 
 ## What is ported
 
