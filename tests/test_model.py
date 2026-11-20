@@ -150,7 +150,7 @@ def test_port_loss_error_protects_the_resistance():
     # 0.3 ohm in series with 60 pH, logarithmic frequencies: nearly a through in 50 ohm
     f = np.geomspace(0.05e9, 20e9, 60)
     net = make_network(2, {(1, 2): ('SerRL', [0.3, 60e-12])}, f=f)
-    m = model.extract(net, model.Options(form='pi', coupling=False))
+    m = model.extract(net, model.Options(form='pi', coupling=False, trim_low=False))
     b = m.branches[2]
     c = b.chosen
     assert c.label.startswith('CR7 SerRL') and c.loss < 1e-6 and c.score <= 1
