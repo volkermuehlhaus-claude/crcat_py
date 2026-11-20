@@ -249,9 +249,11 @@ Best passive models:
   ...
 ```
 
-The data are a Sonnet netlist simulation of network XXXII-39 (CR500), so the search finds
-it and its equivalent networks with the exact element values. "Passive" means Re Y >= 0 at
-all frequencies, which still allows negative elements; the report therefore also lists the
+The data are the Y-parameters of network XXXII-39 (CR500) with known element values
+(La 0.5 nH, Lb 0.4 nH, Rc 10 ohm, Ld 0.2 nH, Cd 3 pF), computed by a circuit simulator:
+the file is CRCat's test data, made with Sonnet's netlist (not EM) simulation. So the
+search should find that network and its equivalents with exactly these values, and it does.
+"Passive" means Re Y >= 0 at all frequencies, which still allows negative elements; the report therefore also lists the
 best models whose element values are all real and positive. For the series branch of a
 170 fF MIM capacitor simulated with Palace (1-300 GHz, `--fit y21`), for example, that list
 starts with 5-element models (C plus a frequency-dependent loss) and contains the plain
