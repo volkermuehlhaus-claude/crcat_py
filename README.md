@@ -14,10 +14,11 @@ The theory is in J. C. Rautio, "Direct Least-Squares Rational-Polynomial Lumped-
 Extraction and Group Theory," IEEE Journal of Microwaves, 2025,
 doi:[10.1109/JMW.2025.3598986](https://doi.org/10.1109/JMW.2025.3598986).
 
-This is the `netlist-tool` branch: the port of CRCat (branch `main`) plus a tool on top of
-it that turns S-parameter data into a SPICE or Spectre netlist, at the command line or in a
-small window. Everything under [From S-parameters to a netlist](#from-s-parameters-to-a-netlist)
-is on this branch only.
+This is the `main` branch: the port of CRCat plus a tool on top of it that turns
+S-parameter data into a SPICE or Spectre netlist, at the command line or in a small
+window. The port by itself, kept as close to the MATLAB original as possible, is the
+`matlab-port` branch; everything under
+[From S-parameters to a netlist](#from-s-parameters-to-a-netlist) is on `main` only.
 
 No MATLAB is needed: the catalog was converted from CRCat's `.mat` files to JSON (see
 [The catalog](#the-catalog)), and the numerics use mpmath instead of MATLAB's variable
