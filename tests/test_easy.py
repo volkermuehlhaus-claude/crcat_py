@@ -367,7 +367,7 @@ def test_netlist_in_ngspice(case, tmp_path):
     assert np.abs(s - m.s_matrix(m.freq)).max() < 1e-5      # the netlist has six digits
 
 
-# --- frequency of use, weights by frequency span ------------------------------------------------
+# --- target frequency, weights by frequency span ------------------------------------------------
 
 def test_span_weights():
     even = np.linspace(1e9, 40e9, 40)
@@ -394,18 +394,18 @@ def test_frequency_of_use():
     (e_plain, _), (e_aimed, numbers) = q_error(plain), q_error(aimed)
     assert numbers['frequency'] == f0 and set(numbers) == {'frequency', 'error_db', 'L', 'Q'}
     assert e_aimed <= e_plain + 1e-9 and aimed.error_near(f0) <= plain.error_near(f0) * 1.001
-    # every candidate carries its errors near the frequency of use, and the score counts
+    # every candidate carries its errors near the target frequency, and the score counts
     # them with limits three times tighter
     b = aimed.branches[2]
     c = b.chosen
     assert c.near is not None and plain.branches[2].chosen.near is None
     assert np.isclose(model.score_of(c, aimed.options), c.score)
     assert c.score >= model.TARGET_TIGHTER * c.near[0] / aimed.options.target - 1e-12
-    # the verdict names the frequency of use, with model and data
+    # the verdict names the target frequency, with model and data
     a = advice.assess(aimed, net)
     assert a.target.startswith(f'at {f0 / 1e9:.4g} GHz: L ') and '(data ' in a.target
     assert a.target == a.lines()[1] and advice.assess(plain, net).target == ''
-    assert f'frequency of use {f0 / 1e9:g} GHz' in '\n'.join(model.describe(aimed))
+    assert f'target frequency {f0 / 1e9:g} GHz' in '\n'.join(model.describe(aimed))
     # outside the fit band it is an error, with the band in the message
     with pytest.raises(ValueError, match='outside the fit band'):
         model.extract(net, model.Options(ftarget=90e9))

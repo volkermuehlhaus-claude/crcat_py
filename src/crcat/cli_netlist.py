@@ -58,7 +58,8 @@ def main(argv=None):
     ap.add_argument('--fmin', type=float, default=None, help='lower end of the fit band, GHz')
     ap.add_argument('--fmax', type=float, default=None, help='upper end of the fit band, GHz')
     ap.add_argument('--ftarget', type=float, default=None,
-                    help='frequency of use, GHz: the error limits are three times tighter '
+                    help='target frequency, GHz (optional): the frequency the model should '
+                         'be most accurate at; the error limits are three times tighter '
                          'around it, and the result is also reported there')
     ap.add_argument('--quality', choices=tuple(model.QUALITY), default='standard',
                     help='error limits and choice in one word: small (fewer elements, more '

@@ -89,7 +89,7 @@ class Options:
     """Settings of :func:`extract`.
 
     fmin, fmax: fit band in Hz (default: all data; a 0 Hz point is never used).
-    ftarget: frequency of use in Hz (default: none). Around it (a bell of 15 % relative
+    ftarget: target frequency in Hz (default: none). Around it (a bell of 15 % relative
         width) the three error limits are three times tighter: every candidate is
         judged over the whole band as always and, with the tighter limits, near this
         frequency, and the refinement works on both. So the few elements are right
@@ -776,7 +776,7 @@ def target_window(freq, ftarget):
 
 
 def target_weights(freq, ftarget):
-    """Weights (mean 1) that pick the region around the frequency of use."""
+    """Weights (mean 1) that pick the region around the target frequency."""
     w = span_weights(freq) * target_window(freq, ftarget)
     return w / w.mean()
 
@@ -1108,7 +1108,7 @@ class _BranchSearch:
             sd, dx, dr = self.diffs(yb)
             parts = [root_w * sd / opt.target, wx * (root_w[:, None] * dx).ravel(),
                      wl * (root_w[:, None] * dr).ravel()]
-            if root_near is not None:            # the same near the frequency of use, tighter
+            if root_near is not None:            # the same near the target frequency, tighter
                 parts += [TARGET_TIGHTER * root_near * sd / opt.target,
                           TARGET_TIGHTER * wx * (root_near[:, None] * dx).ravel(),
                           TARGET_TIGHTER * wl * (root_near[:, None] * dr).ravel()]
@@ -1478,7 +1478,7 @@ def extract(network, options=None, catalog=None, progress=None, cancel=None):
     n = network.nports
     eye = np.eye(n)
     if opt.ftarget is not None and not f[0] <= opt.ftarget <= f[-1]:
-        raise ValueError(f'the frequency of use, {opt.ftarget / 1e9:g} GHz, is outside the fit '
+        raise ValueError(f'the target frequency, {opt.ftarget / 1e9:g} GHz, is outside the fit '
                          f'band {f[0] / 1e9:g} to {f[-1] / 1e9:g} GHz')
     left_out, y_dc = None, None
     if opt.trim_low and opt.fmin is None:
@@ -1594,7 +1594,7 @@ def describe(model):
              f'else {o.tolerance:g} x the best, refine {"on" if o.refine else "off"}, '
              f'up to {o.max_elements} elements per branch, delay {_delay_text(o.delay)}, '
              f'sequential {"on" if o.sequential else "off"}, DC paths {o.dc}, '
-             + (f'frequency of use {o.ftarget / 1e9:g} GHz, ' if o.ftarget else '') +
+             + (f'target frequency {o.ftarget / 1e9:g} GHz, ' if o.ftarget else '') +
              f'form {o.form}, coupled coils {"on" if o.coupling else "off"}']
     if model.reciprocity_error > 1e-6:
         lines.append(f'data are not reciprocal: RMS |S - S^T|/2 = '

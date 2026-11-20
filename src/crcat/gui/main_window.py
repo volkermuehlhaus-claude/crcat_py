@@ -16,6 +16,7 @@ from .. import __version__, advice, check, data, model, netlist
 from ..cli_netlist import write_outputs
 from ..plots import VIEWS, compare, views_for
 from ..schematic import draw_row
+from .frequency_edit import FrequencyEdit
 from .worker import ExtractWorker
 
 MAX_ALTERNATIVES = 25
@@ -50,11 +51,11 @@ class MainWindow(QMainWindow):
         row_file.addWidget(browse)
 
         # --- options ---
-        self.fmin = QDoubleSpinBox(decimals=3, maximum=1e4, suffix=' GHz')
-        self.fmax = QDoubleSpinBox(decimals=3, maximum=1e4, suffix=' GHz')
-        for w in (self.fmin, self.fmax):
-            w.setSpecialValueText('data')            # 0 = limit of the data
-            w.setToolTip('0 (shown as "data") uses the limit of the data')
+        # frequencies are plain text fields: a number in GHz, empty = not set
+        self.fmin = FrequencyEdit('data', 'Lower end of the fit band. Empty: from the lowest '
+                                  'frequency of the data (shown in grey).')
+        self.fmax = FrequencyEdit('data', 'Upper end of the fit band. Empty: up to the highest '
+                                  'frequency of the data (shown in grey).')
         self.full_range = QPushButton('Full range')
         self.full_range.setToolTip('Fit all frequencies of the data')
         self.full_range.clicked.connect(self.reset_band)
@@ -158,18 +159,18 @@ class MainWindow(QMainWindow):
         row_simple.addWidget(self.fmin)
         row_simple.addWidget(QLabel('to'))
         row_simple.addWidget(self.fmax)
+        row_simple.addWidget(QLabel('GHz'))
         row_simple.addWidget(self.full_range)
         row_simple.addSpacing(16)
-        self.ftarget = QDoubleSpinBox(decimals=3, maximum=1e4, suffix=' GHz')
-        self.ftarget.setSpecialValueText('not set')      # 0 = no frequency of use
-        self.ftarget.setKeyboardTracking(False)
-        self.ftarget.setToolTip(
-            'The frequency where the part is used. Around it the error limits are three '
-            'times tighter, so the model is right there first and within the normal '
-            'limits elsewhere; L, Q of model and data are shown for it. 0: not set.')
+        self.ftarget = FrequencyEdit(
+            'optional',
+            'Optional. The frequency the model should be most accurate at: around it the '
+            'error limits are three times tighter, and L, Q of model and data are shown '
+            'for it.')
         self.ftarget.valueChanged.connect(lambda *_: self._invalidate())
-        row_simple.addWidget(QLabel('Used at'))
+        row_simple.addWidget(QLabel('Target frequency'))
         row_simple.addWidget(self.ftarget)
+        row_simple.addWidget(QLabel('GHz'))
         row_simple.addSpacing(16)
         row_simple.addWidget(QLabel('Model:'))
         row_simple.addWidget(self.quality)
@@ -327,10 +328,10 @@ class MainWindow(QMainWindow):
             w.toggled.connect(self._settings_changed)
         # settings that need a new search: a model made with other values is not shown
         for w in (self.fmin, self.fmax):
-            w.setKeyboardTracking(False)         # act on the finished number
             w.valueChanged.connect(lambda *_: self._invalidate(band=True))
         for w in (self.delay, self.line_z0):
             w.setKeyboardTracking(False)
+            w.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
             w.valueChanged.connect(lambda *_: self._invalidate())
         for w in (self.require, self.form, self.line_mode, self.dc):
             w.currentIndexChanged.connect(lambda *_: self._invalidate())
@@ -398,6 +399,9 @@ class MainWindow(QMainWindow):
         self.clear_results()
         if new_file:                                 # the band of another file means nothing here
             self.reset_band()
+        f = self.network.f[self.network.f > 0]       # what an empty band field stands for
+        self.fmin.setPlaceholderText(f'{f.min() / 1e9:.4g}' if f.size else 'data')
+        self.fmax.setPlaceholderText(f'{f.max() / 1e9:.4g}' if f.size else 'data')
         self.look_at_data()
         return True
 

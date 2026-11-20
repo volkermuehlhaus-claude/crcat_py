@@ -159,7 +159,7 @@ Two cases where a narrower band helps most:
 "Full range" in the window, or leaving out `--fmin` and `--fmax`, fits all data.
 
 If the part is used at one frequency but should stay sensible over a wide band (for DC,
-harmonics, stability), keep the wide band and set the frequency of use instead of
+harmonics, stability), keep the wide band and set the target frequency instead of
 narrowing the band.
 
 ## How do I read the result?
@@ -203,12 +203,12 @@ the band and too high at the low end.
 
 What helps:
 
-- **Say where the part is used.** With a frequency in "Used at" (`--ftarget`), the error
+- **Say where the part is used.** With a "Target frequency" (`--ftarget`), the error
   limits are three times tighter around it, and the result shows L and Q of model and
   data there. As one example, a 40 pH inductor fitted to 150 GHz and used at 28 GHz had
-  Q 14.4 in the model against 10.9 in the data; with the frequency of use set, 10.7.
+  Q 14.4 in the model against 10.9 in the data; with the target frequency set, 10.7.
 - "Most accurate" uses more elements, and the resistance then rises with frequency.
-- A narrower band around the frequency of use.
+- A narrower band around the target frequency.
 - Look at the R and Q plot, not only at the S-parameter error.
 
 The loss error limit (default 30 %) is what makes the tool care about R at all; with a

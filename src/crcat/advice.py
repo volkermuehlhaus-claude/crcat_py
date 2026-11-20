@@ -32,7 +32,7 @@ class Assessment:
     def __init__(self, level, text, details, suggestions, quantities, target=''):
         self.level, self.text, self.details = level, text, details
         self.suggestions, self.quantities = suggestions, quantities
-        self.target = target                     # the model at the frequency of use
+        self.target = target                     # the model at the target frequency
 
     def lines(self):
         return [f'{self.level}: {self.text}'] + ([self.target] if self.target else []) + \

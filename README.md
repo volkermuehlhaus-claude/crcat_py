@@ -31,7 +31,7 @@ the [FAQ](doc/FAQ.md).
 - [Installation](#installation)
 - [From S-parameters to a netlist](#from-s-parameters-to-a-netlist)
   - [Data check, verdict and suggestions](#data-check-verdict-and-suggestions)
-  - [Frequency of use](#frequency-of-use)
+  - [Target frequency](#target-frequency)
   - [Size against accuracy](#size-against-accuracy)
   - [Line at the ports for a distributed part](#line-at-the-ports-for-a-distributed-part)
   - [Testbench](#testbench)
@@ -136,7 +136,8 @@ plots (see below) and the schematics of all branches (`_crcat_schematic.png`).
 ![crcat-gui](doc/gui.png)
 
 The window asks for three things: the file, the fit band, and the model quality; a
-fourth, the frequency where the part is used, is optional. It
+fourth, the target frequency, is optional. Frequencies are typed as plain numbers in
+GHz; an empty band field means the limit of the data, which it shows in grey. It
 remembers the last data file and loads it at the next start; "Browse" opens in its
 folder, and the save dialog in the folder of the last results.
 
@@ -224,15 +225,15 @@ check and from what went wrong: a lower upper frequency, negative L and C (resis
 positive), more elements, the tee form. In the window each one is a button that changes
 the setting and runs again.
 
-### Frequency of use
+### Target frequency
 
 A few elements cannot follow the loss of a part over a wide band, so the model takes a
 compromise: within the limits everywhere, exactly right nowhere. If the part is used at
-one frequency, say so (`--ftarget`, "Used at" in the window), and the model is made right
-there first.
+one frequency, give it as the target frequency (`--ftarget`, "Target frequency" in the
+window; optional), and the model is made right there first.
 
 - **Tighter limits near that frequency.** Every candidate is judged over the whole band
-  as always, and once more in a region around the frequency of use (a bell of 15 %
+  as always, and once more in a region around the target frequency (a bell of 15 %
   relative width), where the three error limits are three times tighter: -50 dB, 6.7 %
   and 10 % with the defaults. The refinement of the element values works on both. The
   band is still held to the normal limits, so the model stays usable at DC and at
@@ -245,9 +246,9 @@ at 20 GHz: L 549.4pH (data 549.3pH), Q 16.8 (data 15.3), S-parameters within -46
 ```
 
 What it changed on three example files (Standard quality, model against data at the
-frequency of use):
+target frequency):
 
-| Part, fit band | Used at | Q without | Q with | Q of the data | Whole band, without / with |
+| Part, fit band | Target | Q without | Q with | Q of the data | Whole band, without / with |
 |---|---|---|---|---|---|
 | 500 pH inductor, to 50 GHz | 5 GHz | 5.59 | 6.83 | 6.82 | -41.4 / -39.8 dB |
 | | 20 GHz | 19.2 | 16.8 | 15.3 | -41.4 / -41.0 dB |
@@ -257,7 +258,7 @@ frequency of use):
 | 170 fF MIM, to 100 GHz | 28 GHz | 32.3 | 33.8 | 33.4 | -49.7 / -40.9 dB, 6 elements instead of 5 |
 
 The whole-band error can get worse, as for the MIM capacitor: the elements are spent
-where the part is used. The frequency of use must lie in the fit band.
+where the part is used. The target frequency must lie in the fit band.
 
 All errors are means over frequency, not over points: each point counts by the span of
 frequency it stands for. A sweep with equal steps is not affected. A sweep that is dense
@@ -522,7 +523,7 @@ Main options (`crcat-netlist --help` lists all):
 | Option | Meaning |
 |---|---|
 | `--fmin`, `--fmax` (GHz) | fit band; the plot still shows all data |
-| `--ftarget` (GHz) | frequency of use: error limits three times tighter around it, result also reported there, see [Frequency of use](#frequency-of-use) |
+| `--ftarget` (GHz) | target frequency: error limits three times tighter around it, result also reported there, see [Target frequency](#target-frequency) |
 | `--keep-low` | without `--fmin`: also fit the DC region at the low end, which is left out by default |
 | `--quality small`, `standard`, `accurate` | error limits and choice in one word, see the table above; `--pick` and the three limit options override it |
 | `--require positive` | all element values positive (default) |

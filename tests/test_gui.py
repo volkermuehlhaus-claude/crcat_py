@@ -111,7 +111,7 @@ def test_gui_extract_and_save(app, tmp_path):
     make_network(2, TWO_PORT).write_touchstone(str(other.with_suffix('')))
     win.fmax.setValue(20)
     assert win.set_file(src) and win.fmax.value() == 20
-    assert win.set_file(other) and win.fmax.value() == 0 and win.fmax.text() == 'data'
+    assert win.set_file(other) and win.fmax.value() == 0 and win.fmax.text() == ''
     assert win.table.rowCount() == 0 and win.netlist_view.toPlainText() == ''
     assert win.marker_f is None and win.readout.toPlainText() == ''
     assert not win.figure.axes and not win.save_button.isEnabled()
@@ -164,8 +164,10 @@ def test_gui_quality_and_advanced(app, tmp_path):
     assert win.quality.currentData() is None and win.advanced.isHidden()
     win.target.setValue(-40)
     assert win.quality.currentData() == 'accurate'
-    # the frequency of use: a field of the simple row
-    assert win.options().ftarget is None and win.ftarget.text() == 'not set'
+    # the target frequency: a field of the simple row
+    assert win.options().ftarget is None and win.ftarget.text() == ''
+    assert win.ftarget.placeholderText() == 'optional'
+    assert win.fmin.placeholderText() == 'data' and win.fmax.placeholderText() == 'data'
     win.ftarget.setValue(20)
     assert win.options().ftarget == 20e9
     win.ftarget.setValue(0)
@@ -200,6 +202,8 @@ def test_gui_quality_and_advanced(app, tmp_path):
     win.reset_advanced()
     # with a model, a preset picks again at once, without a new search
     assert win.set_file(src)
+    assert (win.fmin.placeholderText(), win.fmax.placeholderText()) == ('0.5', '40')
+    assert win.fmin.text() == '' and win.options().fmin is None      # shown, not set
     win.run()
     wait_for(app, lambda: win.model is not None and win.worker is None)
     n = win.model.n_elements()
@@ -259,6 +263,39 @@ def test_gui_remembers_the_last_data_file(app, tmp_path):
     plain = MainWindow()
     assert plain.remembered('data_file') == '' and not plain.restore_last_file()
     plain.close()
+
+
+def test_frequency_edit(app):
+    from crcat.gui.frequency_edit import FrequencyEdit, parse_ghz
+    assert [parse_ghz(t) for t in ('28', ' 28,5 ', '30 GHz', '30g', '0.5', '')] == \
+        [28, 28.5, 30, 30, 0.5, 0]
+    assert [parse_ghz(t) for t in ('abc', '-3', '1e999', 'nan', '3 MHz')] == [None] * 5
+    e = FrequencyEdit('optional', 'what it is')
+    seen = []
+    e.valueChanged.connect(seen.append)
+
+    def type_in(text):
+        e.setText(text)
+        e.editingFinished.emit()
+    assert e.value() == 0 and e.text() == '' and e.placeholderText() == 'optional'
+    type_in('28')
+    type_in('28')                                # the same value again: no second signal
+    type_in('28,5 GHz')
+    assert seen == [28, 28.5] and e.text() == '28.5' and e.value() == 28.5
+    type_in('abc')                               # not a frequency: back to the last value
+    assert seen == [28, 28.5] and e.text() == '28.5' and 'is not a frequency' in e.toolTip()
+    type_in('-3')
+    assert seen == [28, 28.5] and e.value() == 28.5
+    type_in('30')
+    assert 'is not a frequency' not in e.toolTip() and 'what it is' in e.toolTip()
+    e.clear()                                    # the clear button: not set, at once
+    assert seen == [28, 28.5, 30, 0] and e.value() == 0
+    e.setValue(85.2)
+    assert e.text() == '85.2' and seen[-1] == 85.2
+    e.setValue(0)
+    assert e.text() == '' and seen[-1] == 0 and len(seen) == 6
+    e.setText('4')                               # typing alone does nothing yet
+    assert e.value() == 0 and len(seen) == 6
 
 
 def test_gui_cancel(app, tmp_path):
