@@ -58,7 +58,8 @@ __all__ = ['compare', 'VIEWS', 'views_for', 'MAX_TRACES', 'series_quantities', '
 
 DATA_MARKERS = 30       # open circles per data trace, about
 
-VIEWS = {'s': 'S-parameters', 'error': 'Error', 'lrq': 'L (or C), R, Q'}
+VIEWS = {'s': 'S-parameters', 'error': 'Error', 'lrq': 'L (or C), R, Q',
+         'size': 'Size against accuracy'}
 MAX_TRACES = 8          # with more S-parameters, only the ones with the largest error
 
 
@@ -229,11 +230,36 @@ def _view_lrq(fig, model, network, all_data):
             all_data, ax1)
 
 
+def _view_size(fig, model, network, all_data):
+    """Error of the whole model against its number of elements, for the models that can be
+    put together from the candidates tried (Model.tradeoff); the one in use is marked."""
+    points = model.tradeoff()
+    ax = fig.subplots()
+    x = [p.n_elements for p in points]
+    y = [p.error_db for p in points]
+    ax.plot(x, y, color='C0', lw=1.2, marker='o', markersize=6)
+    ax.plot([model.n_elements()], [model.error_db()], color='C3', marker='o', markersize=11,
+            markerfacecolor='none', markeredgewidth=2, ls='none', label='model in use')
+    ax.axhline(model.options.target_db, color='k', ls='--', lw=1,
+               label=f'limit {model.options.target_db:g} dB')
+    ax.set_xlabel('elements in the model')
+    ax.set_ylabel('S-parameter error of the model (dB)')
+    ax.set_title('size against accuracy: click a point to use that model', fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.xaxis.get_major_locator().set_params(integer=True)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.crcat_tradeoff = points
+    fig.crcat_readout = Readout(np.array([]))
+
+
 def compare(model, network, fig=None, view='s', all_data=False):
     """Draw data against model into ``fig`` (a matplotlib Figure; a new one if None).
 
-    ``view``: 's', 'error' or 'lrq' (see the module text). ``all_data``: all frequencies
-    of the data instead of the fit band only; the fit band is then shaded.
+    ``view``: 's', 'error', 'lrq' or 'size' (see the module text; 'size' is the error
+    of the model against its number of elements, with the points in ``fig.crcat_tradeoff``).
+    ``all_data``: all frequencies of the data instead of the fit band only; the fit band is
+    then shaded.
     """
     if view not in views_for(model):
         raise ValueError(f'view {view!r} is not available: use one of {views_for(model)}')
@@ -241,5 +267,7 @@ def compare(model, network, fig=None, view='s', all_data=False):
         from matplotlib.figure import Figure
         fig = Figure(figsize=(8, 6.5))
     fig.clear()
-    {'s': _view_s, 'error': _view_error, 'lrq': _view_lrq}[view](fig, model, network, all_data)
+    fig.crcat_tradeoff = None
+    {'s': _view_s, 'error': _view_error, 'lrq': _view_lrq,
+     'size': _view_size}[view](fig, model, network, all_data)
     return fig

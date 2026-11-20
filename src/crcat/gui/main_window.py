@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog
                                QProgressBar, QPushButton, QSpinBox, QSplitter, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
-from .. import __version__, data, model, netlist
+from .. import __version__, advice, check, data, model, netlist
 from ..cli_netlist import write_outputs
 from ..plots import VIEWS, compare, views_for
 from ..schematic import draw_row
@@ -144,12 +144,24 @@ class MainWindow(QMainWindow):
         self.bar.setRange(0, 1000)
         self.status = QLabel('Choose a Touchstone file.')
         self.status.setWordWrap(True)
+        self.verdict = QLabel('')                # one word on a colored patch
+        self.verdict.setVisible(False)
+        self.suggest_row = QHBoxLayout()         # buttons that apply a suggestion
+        self.suggest_row.addWidget(self.verdict)
+        self.suggest_row.addStretch(1)
+        self.suggest_buttons = []
+        self.data_check = None
+        self.assessment = None
+        self.copy_button = QPushButton('Copy netlist')
+        self.copy_button.setEnabled(False)
+        self.copy_button.clicked.connect(self.copy_netlist)
         row_run = QHBoxLayout()
         row_run.addWidget(self.run_button)
         row_run.addWidget(self.cancel_button)
         row_run.addWidget(self.bar, 1)
         row_run.addWidget(QLabel('Netlist:'))
         row_run.addWidget(self.format)
+        row_run.addWidget(self.copy_button)
         row_run.addWidget(self.save_button)
 
         # --- results ---
@@ -218,7 +230,11 @@ class MainWindow(QMainWindow):
         layout.addLayout(row_file)
         layout.addLayout(row_opt)
         layout.addLayout(row_run)
+        layout.addLayout(self.suggest_row)
         layout.addWidget(self.status)
+        for w in (self.target, self.reactance_percent, self.loss_percent, self.max_elements):
+            w.valueChanged.connect(self._reselect)
+        self.pick.currentIndexChanged.connect(self._reselect)
         layout.addWidget(split, 1)
         central = QWidget()
         central.setLayout(layout)
@@ -256,10 +272,72 @@ class MainWindow(QMainWindow):
         self.clear_results()
         if new_file:                                 # the band of another file means nothing here
             self.reset_band()
-        f = self.network.f
-        self.status.setText(f'{pathlib.Path(path).name}: {self.network.nports} port(s), '
-                            f'{f[0] / 1e9:.6g} to {f[-1] / 1e9:.6g} GHz, {f.size} points.')
+        self.look_at_data()
         return True
+
+    # --- data check, verdict, suggestions ---------------------------------------------------
+
+    def look_at_data(self):
+        """The data check for the band in the fields: verdict and a band suggestion."""
+        try:
+            c = check.check(self.network, self.fmin.value() * 1e9 or None,
+                            self.fmax.value() * 1e9 or None, self.target.value())
+        except ValueError as ex:
+            self.data_check = None
+            self.status.setText(str(ex))
+            self._show_verdict('', [])
+            return
+        self.data_check = c
+        self.status.setText(pathlib.Path(self._loaded).name + ': ' + '\n'.join(c.lines()))
+        suggestions = []
+        if c.fmax:
+            suggestions.append(advice.Suggestion(f'Fit to {c.fmax / 1e9:.3g} GHz',
+                                                 'above that the part is distributed', fmax=c.fmax))
+        self._show_verdict({'suited': 'good', 'limited': 'fair', 'not suited': 'poor'}[c.verdict],
+                           suggestions, c.verdict)
+
+    def _show_verdict(self, level, suggestions, word=None):
+        colors = {'good': '#2e7d32', 'fair': '#b26a00', 'poor': '#b71c1c'}
+        self.verdict.setVisible(bool(level))
+        if level:                                # text and background both set: dark mode safe
+            self.verdict.setText(word or level)
+            self.verdict.setStyleSheet(f'color: white; background: {colors[level]}; '
+                                       f'padding: 2px 8px; border-radius: 3px; font-weight: bold;')
+        for b in self.suggest_buttons:
+            self.suggest_row.removeWidget(b)
+            b.deleteLater()
+        self.suggest_buttons = []
+        for s in suggestions:
+            b = QPushButton(s.label)
+            b.setToolTip(s.why)
+            b.clicked.connect(lambda _=False, s=s: self.apply_suggestion(s))
+            self.suggest_row.insertWidget(self.suggest_row.count() - 1, b)
+            self.suggest_buttons.append(b)
+
+    def apply_suggestion(self, suggestion):
+        """Set the fields a suggestion names and extract again."""
+        for key, value in suggestion.changes.items():
+            if key == 'fmax':
+                self.fmax.setValue(value / 1e9)
+            else:
+                combo = {'require': self.require, 'pick': self.pick, 'form': self.form}[key]
+                combo.setCurrentIndex(combo.findData(value))
+        self.model = None
+        self.run()
+
+    def copy_netlist(self):
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText(self.netlist_view.toPlainText())
+        self.copy_button.setText('Copied')
+
+    def _reselect(self, *_):
+        """Limits or choice changed with a model at hand: choose again from the candidates
+        tried, without a new search."""
+        if self.model is None or self.worker is not None:
+            return
+        self.model.reselect(self.options())
+        self._fill_table()
+        self._refresh()
 
     def reset_band(self):
         """Fit band back to all frequencies of the data."""
@@ -270,6 +348,9 @@ class MainWindow(QMainWindow):
         """Empty table, schematic, netlist and plot (a new file or no model)."""
         self.table.setRowCount(0)
         self.netlist_view.clear()
+        self.view.clear()
+        self.copy_button.setEnabled(False)
+        self.assessment = None
         self.readout.clear()
         self.marker_f = None
         self.marker_lines = []
@@ -333,7 +414,10 @@ class MainWindow(QMainWindow):
         self._finish('')
         self.save_button.setEnabled(True)
         self._fill_table()
+        first = self.view.count() == 0
         self._refresh()
+        if first and self.data_check is not None and self.data_check.kind in ('inductor', 'capacitor'):
+            self.view.setCurrentIndex(self.view.findData('lrq'))     # what such a part is judged by
 
     # --- results ------------------------------------------------------------------------
 
@@ -383,7 +467,11 @@ class MainWindow(QMainWindow):
             text += f' Line at each port: {m.delay * 1e12:.4g} ps.'
         if warnings:
             text += '\nWarning: ' + '\nWarning: '.join(warnings)
-        self.status.setText(text)
+        self.assessment = a = advice.assess(m, self.network, self.data_check)
+        self.status.setText(a.text + '\n' + text)
+        self._show_verdict(a.level, a.suggestions)
+        self.copy_button.setEnabled(True)
+        self.copy_button.setText('Copy netlist')
         self._show_netlist()
         self._show_schematic()
         self._show_plot()
@@ -434,10 +522,23 @@ class MainWindow(QMainWindow):
         self.set_marker(readout.f[i])
 
     def _on_click(self, event):
-        if event.inaxes is not None and event.button == 1 and event.xdata is not None:
+        if event.inaxes is None or event.button != 1 or event.xdata is None:
+            return
+        points = getattr(self.figure, 'crcat_tradeoff', None)
+        if points:
+            self.use_size(min(points, key=lambda p: abs(p.n_elements - event.xdata)))
+        else:
             self.set_marker(event.xdata)
 
+    def use_size(self, point):
+        """Use the model of a point of the size-against-accuracy view."""
+        self.model.apply(point)
+        self._fill_table()
+        self._refresh()
+
     def _on_drag(self, event):
+        if getattr(self.figure, 'crcat_tradeoff', None):
+            return
         if event.inaxes is not None and event.button == 1 and event.xdata is not None:
             self.set_marker(event.xdata)
 

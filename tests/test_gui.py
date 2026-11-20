@@ -35,6 +35,7 @@ def test_gui_extract_and_save(app, tmp_path):
     assert 'file first' in win.status.text() and win.worker is None
     assert not win.set_file(tmp_path / 'missing.s2p') and 'Cannot read' in win.status.text()
     assert win.set_file(src) and '2 port(s)' in win.status.text()
+    assert win.verdict.text() == 'suited' and 'inductor' in win.status.text()
     win.pick.setCurrentIndex(win.pick.findData('best'))
     win.run()
     assert not win.run_button.isEnabled()
@@ -59,7 +60,25 @@ def test_gui_extract_and_save(app, tmp_path):
     combo.setCurrentIndex(0)
     assert win.netlist_view.toPlainText() == before and shown() == 'p1 - p2: CR7 SerRL'
     # plot views: S-parameters, error, and L/R/Q for a 2-port; all data on request
-    assert [win.view.itemData(k) for k in range(win.view.count())] == ['s', 'error', 'lrq']
+    assert [win.view.itemData(k) for k in range(win.view.count())] == ['s', 'error', 'lrq', 'size']
+    # data check and verdict: an inductor opens with L, R, Q; no suggestions for a good model
+    assert win.data_check.kind == 'inductor' and win.view.currentData() == 'lrq'
+    assert win.verdict.text() == 'good' and not win.suggest_buttons
+    assert win.status.text().startswith('0.5 to 40 GHz: 5 elements')
+    win.copy_button.click()
+    assert app.clipboard().text() == win.netlist_view.toPlainText()
+    # size against accuracy: a click picks that model; the limit field re-picks at once
+    win.view.setCurrentIndex(win.view.findData('size'))
+    points = win.figure.crcat_tradeoff
+    win.use_size(points[1])
+    assert win.model.n_elements() == points[1].n_elements < 5 and win.verdict.text() != 'good'
+    win.use_size(points[-1])
+    assert win.model.error_db() < -150
+    win.max_elements.setValue(1)
+    assert all(b.chosen.n_elements <= 1 for b in win.model.branches) and win.worker is None
+    win.max_elements.setValue(5)
+    assert win.model.error_db() < -150 and win.table.rowCount() == 3
+    win.view.setCurrentIndex(win.view.findData('s'))
     assert [ax.get_ylabel() for ax in win.figure.axes] == ['magnitude (dB)', 'phase (deg)']
     win.view.setCurrentIndex(win.view.findData('lrq'))
     assert [ax.get_ylabel() for ax in win.figure.axes] == ['series L (pH)', 'series R (ohm)',
@@ -99,8 +118,25 @@ def test_gui_extract_and_save(app, tmp_path):
     win.full_range.click()
     assert win.fmin.value() == 0 and win.options().fmin is None and win.options().fmax is None
     assert {p.name for p in files} == {
-        'dut_crcat.scs', 'dut_crcat.s2p', 'dut_crcat.json', 'dut_crcat.png',
+        'dut_crcat.scs', 'dut_crcat_tb.scs', 'dut_crcat.s2p', 'dut_crcat.json', 'dut_crcat.png',
         'dut_crcat_error.png', 'dut_crcat_lrq.png', 'dut_crcat_schematic.png'}
+    win.close()
+
+
+def test_gui_suggestion_button(app, tmp_path):
+    import numpy as np
+    from test_easy import line
+    src = tmp_path / 'line.s2p'
+    line(50.0, 6e-12, np.linspace(0.5e9, 100e9, 120), loss=0.01).write_touchstone(
+        str(src.with_suffix('')))
+    win = MainWindow()
+    win.coupling.setChecked(False)
+    assert win.set_file(src) and win.verdict.text() == 'limited'
+    assert [b.text()[:7] for b in win.suggest_buttons] == ['Fit to ']   # from the data check
+    win.suggest_buttons[0].click()                                      # sets the band and runs
+    assert 10 < win.fmax.value() < 35 and win.worker is not None
+    wait_for(app, lambda: win.model is not None and win.worker is None)
+    assert win.model.freq[-1] <= win.fmax.value() * 1e9 and win.verdict.text() in ('good', 'fair')
     win.close()
 
 

@@ -211,7 +211,7 @@ def test_plot_views():
     from crcat import plots
     net = low_impedance_inductor()
     m = model.extract(net, model.Options(fmax=40e9))
-    assert plots.views_for(m) == ['s', 'error', 'lrq']
+    assert plots.views_for(m) == ['s', 'error', 'lrq', 'size']
     fig = plots.compare(m, net)                                    # fit band only
     assert fig.axes[0].get_xlim()[1] < 45 and 'shaded' not in fig.axes[0].get_title()
     labels = [t.get_text() for t in fig.legends[0].get_texts()]
@@ -246,7 +246,9 @@ def test_plot_views():
     three = make_network(3, {(1,): ('C', [10e-15]), (1, 3): ('SerRL', [1.5, 0.3e-9]),
                              (2, 3): ('SerRL', [1.0, 0.25e-9])})
     m3 = model.extract(three)
-    assert plots.views_for(m3) == ['s', 'error']
+    assert plots.views_for(m3) == ['s', 'error', 'size']
+    fig = plots.compare(m3, three, view='size')
+    assert len(fig.crcat_tradeoff) >= 2 and fig.axes[0].get_xlabel() == 'elements in the model'
     with pytest.raises(ValueError):
         plots.compare(m3, three, view='lrq')
     plots.MAX_TRACES, keep = 3, plots.MAX_TRACES
@@ -496,9 +498,13 @@ def test_cli(tmp_path, capsys):
     assert 'crcat-netlist' in out and 'fmax=30.0' in out
     assert 'model (pi form): 5 elements' in out
     files = {p.name for p in (tmp_path / 'out').iterdir()}
-    assert files == {'dut_crcat.sp', 'dut_crcat.scs', 'dut_crcat.s2p', 'dut_crcat.json',
-                     'dut_crcat.png', 'dut_crcat_error.png', 'dut_crcat_lrq.png',
-                     'dut_crcat_schematic.png'}
+    assert files == {'dut_crcat.sp', 'dut_crcat.scs', 'dut_crcat_tb.sp', 'dut_crcat_tb.scs',
+                     'dut_crcat.s2p', 'dut_crcat.json', 'dut_crcat.png', 'dut_crcat_error.png',
+                     'dut_crcat_lrq.png', 'dut_crcat_schematic.png'}
+    assert 'data check: 2 port(s)' in out and 'suited:' in out and 'good: 0.5 to 30 GHz' in out
+    main([str(src), '--check-only'])
+    out = capsys.readouterr().out
+    assert 'data check:' in out and 'model (' not in out
     d = json.loads((tmp_path / 'out' / 'dut_crcat.json').read_text())
     assert d['ports'] == 2 and len(d['branches']) == 3 and d['error_db'] < -100
     back = skrf.Network(str(tmp_path / 'out' / 'dut_crcat.s2p'))

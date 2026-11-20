@@ -5,12 +5,13 @@ import json
 import pathlib
 import sys
 
-from . import __version__, data, model, netlist
+from . import __version__, advice, check, data, model, netlist, testbench
 from .component import use_ascii_units
 
 
 def write_outputs(m, network, outdir, base, formats, name, plot=True, all_data=False):
-    """Write netlist(s), model response, JSON, plot and schematic; return the files."""
+    """Write netlist(s) with testbenches, model response, JSON, plots and schematic;
+    return the files."""
     outdir = pathlib.Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     files = []
@@ -18,6 +19,10 @@ def write_outputs(m, network, outdir, base, formats, name, plot=True, all_data=F
         p = outdir / f'{base}_crcat{netlist.EXTENSION[fmt]}'
         p.write_text(netlist.render(m, fmt, name), encoding='utf-8')
         files.append(p)
+        bench = outdir / f'{base}_crcat_tb{netlist.EXTENSION[fmt]}'      # S-parameter testbench
+        make = testbench.ngspice if fmt == 'spice' else testbench.spectre
+        bench.write_text(make(m, p.name, name), encoding='utf-8')
+        files.append(bench)
     p = outdir / f'{base}_crcat.s{m.nports}p'
     m.to_network(network.f[network.f > 0]).write_touchstone(str(p.with_suffix('')), form='ri')
     files.append(p)
@@ -28,7 +33,7 @@ def write_outputs(m, network, outdir, base, formats, name, plot=True, all_data=F
         from matplotlib.backends.backend_agg import FigureCanvasAgg
         from .plots import compare
         from .plots import views_for
-        for view in views_for(m):
+        for view in [v for v in views_for(m) if v != 'size']:
             fig = compare(m, network, view=view, all_data=all_data)
             FigureCanvasAgg(fig)
             p = outdir / (f'{base}_crcat.png' if view == 's' else f'{base}_crcat_{view}.png')
@@ -94,6 +99,8 @@ def main(argv=None):
                     help='output folder (default: the folder of the input file)')
     ap.add_argument('--full-search', action='store_true',
                     help='synthesize every catalog network (slower, same result)')
+    ap.add_argument('--check-only', action='store_true',
+                    help='only look at the data (kind of part, size, suited or not): no fit')
     ap.add_argument('--noplot', action='store_true', help='do not write the plots')
     ap.add_argument('--plot-all-data', action='store_true',
                     help='plots over all frequencies of the data, not only the fit band')
@@ -107,6 +114,14 @@ def main(argv=None):
 
     path = pathlib.Path(args.file)
     network = data.read(path)
+    try:
+        looked = check.check(network, None if args.fmin is None else args.fmin * 1e9,
+                             None if args.fmax is None else args.fmax * 1e9, args.target_db)
+    except ValueError as ex:
+        sys.exit(f'error: {ex}')
+    print('data check: ' + '\n            '.join(looked.lines()))
+    if args.check_only:
+        return
     try:
         opt = model.Options(
             fmin=None if args.fmin is None else args.fmin * 1e9,
@@ -123,6 +138,7 @@ def main(argv=None):
         sys.exit(f'error: {ex}')
     m.source = path.name
     print('\n'.join(model.describe(m)))
+    print('\n'.join(advice.assess(m, network, looked).lines()))
     formats = netlist.FORMATS if args.format == 'both' else (args.format,)
     name = args.name or netlist.subckt_name(path.stem + '_model')
     files = write_outputs(m, network, args.outdir or path.parent, path.stem, formats, name,

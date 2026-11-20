@@ -102,7 +102,7 @@ constant 2.9 ohm with the default choice (7 elements, -41.9 dB), and rises from 
 frequency. The L, R, Q plot shows this.
 
 Written next to the input file: the netlist (`_crcat.sp`; with `--format spectre` or `both`
-also `_crcat.scs`), the S-parameters of the model (`_crcat.sNp`), the result as JSON, the
+also `_crcat.scs`), a testbench for it (`_crcat_tb.sp` / `.scs`), the S-parameters of the model (`_crcat.sNp`), the result as JSON, the
 plots (see below) and the schematics of all branches (`_crcat_schematic.png`).
 
 ![crcat-gui](doc/gui.png)
@@ -115,6 +115,69 @@ pair with their coupling factor:
 
 ![coupled coils in crcat-gui](doc/gui_coupled.png)
 
+### Data check, verdict and suggestions
+
+Before any fitting, the tool looks at the data (milliseconds, `crcat.check.check`; printed
+first by `crcat-netlist`, shown in the window when a file is loaded, `--check-only` stops
+there):
+
+```
+data check: 2 port(s), 0.275 to 110 GHz, 400 points: line, self-resonance at 44.27 GHz
+            as a line: 50.8 ohm, 5.81 ps, 230 deg at the top of the band
+            limited: the part is 230 deg long at 110 GHz, distributed: a few lumped elements
+            follow it well up to about 21.5 GHz (45 deg)
+```
+
+- **Kind of part:** inductor, capacitor, line, two-port, one-port or multi-port, from the
+  low-frequency behaviour. The window opens the L, R, Q plot for an inductor or capacitor.
+- **Electrical length.** The low-frequency series L and shunt C give the delay sqrt(L C) and
+  the impedance sqrt(L / C) of the part seen as a line. A few lumped elements follow a line
+  well while it is short: in fits of an ideal and of a simulated 50 ohm line the -40 dB
+  limit was reached up to about 45 degrees, -36 dB at 60 degrees and -24 dB at 90 degrees.
+  From 90 degrees on the check says "limited" and names the frequency of 45 degrees.
+- **Form.** Branches whose data have a negative real part or a negative inductance cannot
+  be made of positive elements. The check counts them for the pi and the tee form and
+  names the form that fits, a magnetic coupling that coupled coils can take, or "not
+  suited" when most branches are like that (the 6-port feed structure under Limits: 13 of
+  21 branches).
+
+After the fit comes a verdict in plain words (`crcat.advice.assess`): good (all limits
+kept), fair or poor, with the figures a designer asks for, here for the 500 pH inductor and
+for the line above over its full band:
+
+```
+good: 0.01 to 50 GHz: 7 elements, S-parameters within -41.9 dB, L within 0.21 %, Q within 18 % (median)
+poor: 0.275 to 110 GHz: 11 elements, S-parameters within -4.3 dB, L within 52 %, Q within 34 % (median)
+      try: Fit to 21.5 GHz; Allow negative L and C
+```
+
+When the model is not good, the verdict comes with suggestions that follow from the data
+check and from what went wrong: a lower upper frequency, negative L and C (resistors stay
+positive), more elements, the tee form. In the window each one is a button that changes
+the setting and runs again.
+
+### Size against accuracy
+
+![size against accuracy](doc/gui_size.png)
+
+The search keeps all candidates of every branch, so other choices cost no new search. The
+plot "Size against accuracy" shows the S-parameter error of the whole model for each total
+number of elements, built from the candidates by always taking the step that lowers the
+error most. A click on a point uses that model. In the same way, a change of an error
+limit, of the choice or of the elements per branch in the window picks again from the
+candidates at once; only band, element signs, form, line, coupled coils, refinement and
+sequential need a new run. In Python: `model.tradeoff()`, `model.apply(point)`,
+`model.reselect(options)`.
+
+### Testbench
+
+Next to each netlist the tool writes a testbench that includes it, puts a port of the
+reference impedance at each pin and runs an S-parameter analysis over the fit band
+(`_crcat_tb.sp` for ngspice, `_crcat_tb.scs` for Spectre). The ngspice testbench is part of
+the tests: the netlists of a pi model, of coupled coils and of a model with port lines,
+simulated with ngspice 46, give the S-parameters of the model. The Spectre testbench has
+not been run in Spectre. "Copy netlist" in the window puts the netlist on the clipboard.
+
 ### Plots
 
 | View | Shows | File |
@@ -122,6 +185,7 @@ pair with their coupling factor:
 | S-parameters | magnitude and phase, data (thin line with circles) and model (solid line) | `_crcat.png` |
 | Error | \|S model - S data\| of each S-parameter against frequency, with the limit | `_crcat_error.png` |
 | L (or C), R, Q | 2-ports: series L or C and series R from -1/Y21, Q from 1/Y11 | `_crcat_lrq.png` |
+| Size against accuracy | error of the whole model against its number of elements, see above | window only |
 
 The plots show the fit band; "All data" in the window (`--plot-all-data`) shows every
 frequency of the data with the fit band shaded. In the window, a click or drag in the plot
@@ -231,6 +295,7 @@ Main options (`crcat-netlist --help` lists all):
 | `--form auto`, `pi`, `tee` | auto (default): pi, and the tee form for a 2-port if a pi branch misses the limit |
 | `--sequential` | pi form: fit the branches to ground to the port admittance minus the models, not the data, of the branches between ports |
 | `--no-coupling` | never use coupled coils |
+| `--check-only` | print the data check and stop |
 | `--delay` (ps) | a line of the reference impedance and this delay at each port: removed from the data before the fit, written as a `T` element (Spectre `tline`) |
 
 Limits:
@@ -439,8 +504,8 @@ itself, plus 306 marked `EqnNotFound`).
 
 ```
 pip install -e ".[dev]"
-python -m pytest            # fast tests (about 45 s, GUI offscreen)
-python -m pytest -m slow    # catalog validation, full searches (about 1.5 min)
+python -m pytest            # fast tests (about 4 min, GUI offscreen; ngspice tests skip without ngspice)
+python -m pytest -m slow    # catalog validation, full searches (about 2 min)
 ```
 
 The tests check against CRCat's README example and its MATLAB tests (`CRCompTest.m`,

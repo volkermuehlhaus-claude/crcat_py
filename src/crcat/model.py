@@ -46,6 +46,7 @@ from .fit import DEFAULT_DPS, crfit, evaluate
 from .seed import Cancelled
 
 __all__ = ['Options', 'Model', 'Branch', 'Candidate', 'Coupled', 'extract', 'shift_ports',
+           'TradeoffPoint', 'pick_candidate', 'score_of',
            'branch_admittances', 'Cancelled']
 
 REQUIRE = ('positive', 'positive-r', 'passive', 'any')
@@ -379,6 +380,78 @@ class Model:
         b = self.branches[branch]
         b.chosen = b.candidates[candidate] if isinstance(candidate, int) else candidate
 
+    def reselect(self, options):
+        """Choose again from the candidates already tried, for other error limits, choice
+        rule or element count in ``options`` (an Options). No new search: instant, but
+        only as good as the candidates at hand; a much stricter limit may need a new
+        extraction. Band, element signs and form stay as they are."""
+        options.check()
+        for b in self.free_branches():
+            pool = [c for c in b.candidates if c.n_elements <= options.max_elements]
+            for c in pool:
+                c.score = score_of(c, options)
+            chosen, limit = pick_candidate(pool, options)
+            rest = sorted((c for c in b.candidates if c is not chosen),
+                          key=lambda c: (c.score > limit,
+                                         c.n_elements if c.score <= limit else 0, c.score))
+            b.candidates, b.chosen, b.limit = [chosen] + rest, chosen, limit
+        for name in ('target_db', 'reactance_percent', 'loss_percent', 'pick', 'tolerance',
+                     'max_elements'):
+            setattr(self.options, name, getattr(options, name))
+
+    def tradeoff(self):
+        """Models from few to many elements, from the candidates already tried: a list of
+        TradeoffPoint, each with a lower error than the one before. Starts with the
+        smallest candidate in every branch, then repeatedly makes the one change to a
+        larger candidate that lowers the error of the whole model most per added element."""
+        free = [(k, b) for k, b in enumerate(self.branches) if b.group is None]
+        keep = {k: b.chosen for k, b in free}
+        best = {}                                # per branch: element count -> candidate
+        for k, b in free:
+            for c in b.candidates:
+                if c.n_elements not in best.setdefault(k, {}) or c.score < best[k][c.n_elements].score:
+                    best[k][c.n_elements] = c
+
+        def error(selection):
+            for k, c in selection.items():
+                self.branches[k].chosen = c
+            e = self.error()
+            return e if math.isfinite(e) else math.inf
+
+        fixed = self.n_elements() - sum(c.n_elements for c in keep.values())   # coils, lines
+
+        def size(selection):
+            return fixed + sum(c.n_elements for c in selection.values())
+
+        try:
+            sel = {k: best[k][min(best[k])] for k, _ in free}
+            points = [TradeoffPoint(size(sel), error(sel), dict(sel))]
+            while True:
+                here = points[-1]
+                step = None
+                for k, _ in free:
+                    for count, c in best[k].items():
+                        added = count - sel[k].n_elements
+                        if added <= 0:
+                            continue
+                        e = error({**sel, k: c})
+                        gain = (_db(here.error) - _db(e)) / added
+                        if e < here.error and (step is None or gain > step[0]):
+                            step = (gain, k, c, e)
+                if step is None:
+                    break
+                sel[step[1]] = step[2]
+                points.append(TradeoffPoint(size(sel), step[3], dict(sel)))
+        finally:
+            for k, c in keep.items():
+                self.branches[k].chosen = c
+        return points
+
+    def apply(self, point):
+        """Use the selection of a TradeoffPoint."""
+        for k, c in point.selection.items():
+            self.branches[k].chosen = c
+
     def free_branches(self):
         """Branches that are not replaced by a coupled-coil group."""
         return [b for b in self.branches if b.group is None]
@@ -630,6 +703,43 @@ def netlist_admittance(connections, values, s):
         return 1 / v1
 
 
+def score_of(cand, opt):
+    """Score of a candidate for the limits of ``opt``: the largest error over its limit."""
+    score = cand.error / opt.target
+    if opt.reactance_percent > 0 and cand.reactance is not None:
+        score = max(score, 100 * cand.reactance / opt.reactance_percent)
+    if opt.loss_percent > 0 and cand.loss is not None:
+        score = max(score, 100 * cand.loss / opt.loss_percent)
+    return score
+
+
+def pick_candidate(pool, opt):
+    """Choose from the pool by the rules of Options.pick; returns (chosen, limit)."""
+    best = min(pool, key=lambda c: c.score)
+    if opt.pick == 'simplest':
+        limit = max(1.0, opt.tolerance * best.score)
+    else:
+        # best score; among practically equal ones the fewest elements, so that exact data
+        # do not give a larger network with meaningless extra elements
+        limit = 1.01 * best.score + EQUAL_SCORE
+    ok = [c for c in pool if c.score <= limit]
+    count = min(c.n_elements for c in ok)
+    chosen = min((c for c in ok if c.n_elements == count), key=lambda c: c.score)
+    return chosen, limit
+
+
+class TradeoffPoint:
+    """A model of a given size: ``n_elements`` in the branches that can be chosen,
+    ``error`` (RMS |S difference|), ``selection`` ({branch index: Candidate})."""
+
+    def __init__(self, n_elements, error, selection):
+        self.n_elements, self.error, self.selection = n_elements, error, selection
+
+    @property
+    def error_db(self):
+        return _db(self.error)
+
+
 class _BranchSearch:
     """Candidates of one branch, synthesized only as far as the choice needs.
 
@@ -784,19 +894,7 @@ class _BranchSearch:
     # --- the choice ---------------------------------------------------------------------
 
     def _pick(self, pool):
-        """Choose from the pool by the rules of Options.pick; returns (chosen, limit)."""
-        opt = self.opt
-        best = min(pool, key=lambda c: c.score)
-        if opt.pick == 'simplest':
-            limit = max(1.0, opt.tolerance * best.score)
-        else:
-            # best score; among practically equal ones the fewest elements, so that exact
-            # data do not give a larger network with meaningless extra elements
-            limit = 1.01 * best.score + EQUAL_SCORE
-        ok = [c for c in pool if c.score <= limit]
-        count = min(c.n_elements for c in ok)
-        chosen = min((c for c in ok if c.n_elements == count), key=lambda c: c.score)
-        return chosen, limit
+        return pick_candidate(pool, self.opt)
 
     def run(self):
         """Choose; returns the chosen Candidate (None if there is no candidate at all)."""
