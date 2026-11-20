@@ -10,6 +10,7 @@ pytest.importorskip('PySide6')
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from crcat import model  # noqa: E402
 from crcat.gui.main_window import MainWindow  # noqa: E402
 from test_model import TWO_PORT, make_network  # noqa: E402
 
@@ -137,6 +138,53 @@ def test_gui_suggestion_button(app, tmp_path):
     assert 10 < win.fmax.value() < 35 and win.worker is not None
     wait_for(app, lambda: win.model is not None and win.worker is None)
     assert win.model.freq[-1] <= win.fmax.value() * 1e9 and win.verdict.text() in ('good', 'fair')
+    win.close()
+
+
+def test_gui_quality_and_advanced(app, tmp_path):
+    src = tmp_path / 'dut.s2p'
+    make_network(2, TWO_PORT).write_touchstone(str(src.with_suffix('')))
+    win = MainWindow()
+    win.show()
+    # the simple window: band, quality; everything else folded away
+    assert win.quality.currentData() == 'standard' and win.advanced.isHidden()
+    assert win.advanced_note.text() == ''
+    win.advanced_button.click()
+    assert not win.advanced.isHidden()
+    win.advanced_button.click()
+    assert win.advanced.isHidden()
+    # a preset sets the fields behind it
+    win.quality.setCurrentIndex(win.quality.findData('small'))
+    assert (win.target.value(), win.reactance_percent.value(), win.loss_percent.value()) == (-30, 30, 50)
+    assert win.options().pick == 'simplest' and model.quality_of(win.options()) == 'small'
+    win.quality.setCurrentIndex(win.quality.findData('accurate'))
+    assert win.options().pick == 'best' and win.target.value() == -40
+    # a field changed by hand: Custom; back to the values of a preset: that preset
+    win.target.setValue(-45)
+    assert win.quality.currentData() is None and win.advanced.isHidden()
+    win.target.setValue(-40)
+    assert win.quality.currentData() == 'accurate'
+    # hidden settings that differ from the defaults are named
+    win.require.setCurrentIndex(win.require.findData('positive-r'))
+    win.delay.setValue(1.5)
+    win.coupling.setChecked(False)
+    assert win.advanced_note.text() == ('In use: R positive, L and C any sign, '
+                                        'line 1.5 ps at each port, no coupled coils')
+    win.reset_advanced()
+    assert win.advanced_note.text() == '' and win.quality.currentData() == 'standard'
+    assert win.options() == model.Options()
+    # choosing Custom opens the advanced part
+    win.quality.setCurrentIndex(win.quality.findData(None))
+    assert not win.advanced.isHidden()
+    win.reset_advanced()
+    # with a model, a preset picks again at once, without a new search
+    assert win.set_file(src)
+    win.run()
+    wait_for(app, lambda: win.model is not None and win.worker is None)
+    n = win.model.n_elements()
+    win.quality.setCurrentIndex(win.quality.findData('small'))
+    assert win.worker is None and win.model.options.target_db == -30
+    assert win.model.n_elements() <= n
     win.close()
 
 

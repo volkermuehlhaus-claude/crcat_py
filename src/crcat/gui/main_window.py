@@ -8,8 +8,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPlainTextEdit,
-                               QProgressBar, QPushButton, QSpinBox, QSplitter, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout, QWidget)
+                               QGroupBox, QProgressBar, QPushButton, QSpinBox, QSplitter,
+                               QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout,
+                               QWidget)
 
 from .. import __version__, advice, check, data, model, netlist
 from ..cli_netlist import write_outputs
@@ -21,6 +22,7 @@ MAX_ALTERNATIVES = 25
 REQUIRE_TEXT = {'positive': 'All positive', 'positive-r': 'R positive, L and C any sign',
                 'passive': 'Passive, any sign', 'any': 'Any sign'}
 PICK_TEXT = {'simplest': 'Simplest within the error limit', 'best': 'Lowest error'}
+QUALITY_TEXT = {'small': 'Small', 'standard': 'Standard', 'accurate': 'Most accurate'}
 
 
 class MainWindow(QMainWindow):
@@ -109,26 +111,60 @@ class MainWindow(QMainWindow):
         for key in netlist.FORMATS:
             self.format.addItem(key, key)
         self.format.currentIndexChanged.connect(self._show_netlist)
-        form1, form2, form3 = QFormLayout(), QFormLayout(), QFormLayout()
-        form1.addRow('Fit band from', self.fmin)
-        form1.addRow('to', self.fmax)
-        form1.addRow('', self.full_range)
+        # model quality: one choice for the error limits and the choice of network
+        self.quality = QComboBox()
+        for key in model.QUALITY:
+            self.quality.addItem(QUALITY_TEXT[key], key)
+        self.quality.addItem('Custom (see Advanced)', None)
+        self.quality.setCurrentIndex(self.quality.findData(model.quality_of(defaults)))
+        self.quality.setToolTip(
+            'Small: fewer elements, more error allowed (-30 dB, reactance 30 %, loss 50 %).\n'
+            'Standard: fewest elements within -40 dB, reactance 20 %, loss 30 %.\n'
+            'Most accurate: the lowest error, whatever the number of elements.\n'
+            'With a model at hand, a change takes effect at once, without a new search.')
+        self.quality.currentIndexChanged.connect(self._quality_chosen)
+        self.advanced_button = QToolButton()
+        self.advanced_button.setText('Advanced')
+        self.advanced_button.setCheckable(True)
+        self.advanced_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.advanced_button.setArrowType(Qt.ArrowType.RightArrow)
+        self.advanced_button.setToolTip('Element signs, error limits, form, line at the ports, '
+                                        'coupled coils and more')
+        self.advanced_button.toggled.connect(self.show_advanced)
+        self.advanced_note = QLabel('')          # what is set in the hidden part
+        row_simple = QHBoxLayout()
+        row_simple.addWidget(QLabel('Fit band from'))
+        row_simple.addWidget(self.fmin)
+        row_simple.addWidget(QLabel('to'))
+        row_simple.addWidget(self.fmax)
+        row_simple.addWidget(self.full_range)
+        row_simple.addSpacing(16)
+        row_simple.addWidget(QLabel('Model:'))
+        row_simple.addWidget(self.quality)
+        row_simple.addSpacing(16)
+        row_simple.addWidget(self.advanced_button)
+        row_simple.addWidget(self.advanced_note, 1)
+        form2, form3 = QFormLayout(), QFormLayout()
         form2.addRow('Element values', self.require)
         form2.addRow('Choice', self.pick)
+        form2.addRow('Elements per branch, up to', self.max_elements)
         form3.addRow('Error limit, S-parameters', self.target)
-        form3.addRow('Elements per branch, up to', self.max_elements)
+        form3.addRow('Error limit, reactance', self.reactance_percent)
+        form3.addRow('Error limit, loss', self.loss_percent)
         form4 = QFormLayout()
-        form4.addRow('Error limit, reactance', self.reactance_percent)
-        form4.addRow('Error limit, loss', self.loss_percent)
         form4.addRow('Form', self.form)
         form4.addRow('Line at each port', self.delay)
-        form4.addRow('', self.coupling)
-        form4.addRow('', self.refine)
-        form4.addRow('', self.sequential)
-        row_opt = QHBoxLayout()
-        for form in (form1, form2, form3, form4):
+        form5 = QVBoxLayout()
+        for w in (self.coupling, self.refine, self.sequential):
+            form5.addWidget(w)
+        form5.addStretch(1)
+        self.advanced = QGroupBox()
+        row_opt = QHBoxLayout(self.advanced)
+        for form in (form2, form3, form4, form5):
             row_opt.addLayout(form)
+            row_opt.addSpacing(12)
         row_opt.addStretch(1)
+        self.advanced.setVisible(False)
 
         # --- run ---
         self.run_button = QPushButton('Extract model')
@@ -228,13 +264,25 @@ class MainWindow(QMainWindow):
 
         layout = QVBoxLayout()
         layout.addLayout(row_file)
-        layout.addLayout(row_opt)
+        layout.addLayout(row_simple)
+        layout.addWidget(self.advanced)
         layout.addLayout(row_run)
         layout.addLayout(self.suggest_row)
         layout.addWidget(self.status)
         for w in (self.target, self.reactance_percent, self.loss_percent, self.max_elements):
             w.valueChanged.connect(self._reselect)
         self.pick.currentIndexChanged.connect(self._reselect)
+        for w in (self.target, self.reactance_percent, self.loss_percent, self.max_elements,
+                  self.delay):
+            w.valueChanged.connect(self._settings_changed)
+        for w in (self.pick, self.require, self.form):
+            w.currentIndexChanged.connect(self._settings_changed)
+        for w in (self.coupling, self.refine, self.sequential):
+            w.toggled.connect(self._settings_changed)
+        self.reset_button = QPushButton('Defaults')
+        self.reset_button.setToolTip('All advanced settings back to their defaults')
+        self.reset_button.clicked.connect(self.reset_advanced)
+        form5.addWidget(self.reset_button)
         layout.addWidget(split, 1)
         central = QWidget()
         central.setLayout(layout)
@@ -329,6 +377,67 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QApplication
         QApplication.clipboard().setText(self.netlist_view.toPlainText())
         self.copy_button.setText('Copied')
+
+    # --- model quality, advanced settings ----------------------------------------------------
+
+    def show_advanced(self, on):
+        self.advanced.setVisible(on)
+        self.advanced_button.setArrowType(Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow)
+        if self.advanced_button.isChecked() != on:
+            self.advanced_button.setChecked(on)
+
+    def _quality_chosen(self, *_):
+        """A preset sets the limits and the choice; one new pick from the candidates."""
+        values = model.QUALITY.get(self.quality.currentData())
+        if values is None:                       # Custom: the fields are in the advanced part
+            self.show_advanced(True)
+            return
+        widgets = (self.target, self.reactance_percent, self.loss_percent, self.pick)
+        for w in widgets:
+            w.blockSignals(True)
+        self.target.setValue(values['target_db'])
+        self.reactance_percent.setValue(values['reactance_percent'])
+        self.loss_percent.setValue(values['loss_percent'])
+        self.pick.setCurrentIndex(self.pick.findData(values['pick']))
+        for w in widgets:
+            w.blockSignals(False)
+        self._reselect()
+
+    def _settings_changed(self, *_):
+        """Keep the quality field and the note on hidden settings in step with the fields."""
+        opt = self.options()
+        self.quality.blockSignals(True)
+        self.quality.setCurrentIndex(self.quality.findData(model.quality_of(opt)))
+        self.quality.blockSignals(False)
+        d = model.Options()
+        notes = []
+        if opt.require != d.require:
+            notes.append(REQUIRE_TEXT[opt.require])
+        if opt.max_elements != d.max_elements:
+            notes.append(f'up to {opt.max_elements} elements per branch')
+        if opt.form != d.form:
+            notes.append(f'{opt.form} form')
+        if opt.delay != d.delay:
+            notes.append(f'line {opt.delay * 1e12:.4g} ps at each port')
+        if opt.coupling != d.coupling:
+            notes.append('no coupled coils')
+        if opt.refine != d.refine:
+            notes.append('values not refined')
+        if opt.sequential != d.sequential:
+            notes.append('sequential')
+        self.advanced_note.setText('In use: ' + ', '.join(notes) if notes else '')
+
+    def reset_advanced(self):
+        """All advanced settings back to their defaults (the band stays)."""
+        d = model.Options()
+        self.require.setCurrentIndex(self.require.findData(d.require))
+        self.max_elements.setValue(d.max_elements)
+        self.form.setCurrentIndex(self.form.findData(d.form))
+        self.delay.setValue(0)
+        self.coupling.setChecked(d.coupling)
+        self.refine.setChecked(d.refine)
+        self.sequential.setChecked(d.sequential)
+        self.quality.setCurrentIndex(self.quality.findData(model.quality_of(d)))
 
     def _reselect(self, *_):
         """Limits or choice changed with a model at hand: choose again from the candidates

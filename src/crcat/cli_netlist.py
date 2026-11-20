@@ -57,20 +57,24 @@ def main(argv=None):
     ap.add_argument('file', help='Touchstone file (.sNp)')
     ap.add_argument('--fmin', type=float, default=None, help='lower end of the fit band, GHz')
     ap.add_argument('--fmax', type=float, default=None, help='upper end of the fit band, GHz')
+    ap.add_argument('--quality', choices=tuple(model.QUALITY), default='standard',
+                    help='error limits and choice in one word: small (fewer elements, more '
+                         'error), standard (default), accurate (lowest error); --pick and '
+                         'the three limit options override it')
     ap.add_argument('--require', choices=model.REQUIRE, default=d.require,
                     help='element values: positive = all positive (default); positive-r = '
                          'R positive, L and C may be negative; passive = any sign if the '
                          'branch stays passive; any = no restriction')
-    ap.add_argument('--pick', choices=model.PICK, default=d.pick,
+    ap.add_argument('--pick', choices=model.PICK, default=None,
                     help='simplest: fewest elements within the error limit (default); '
                          'best: lowest error')
-    ap.add_argument('--target-db', type=float, default=d.target_db,
+    ap.add_argument('--target-db', type=float, default=None,
                     help='S-parameter error limit per branch, RMS S-parameter difference in dB '
                          f'(default {d.target_db:g})')
-    ap.add_argument('--reactance-percent', type=float, default=d.reactance_percent,
+    ap.add_argument('--reactance-percent', type=float, default=None,
                     help='reactance error limit of a branch: RMS of Im dYii / |Yii| of the '
                          f'port admittances, percent; 0 = off (default {d.reactance_percent:g})')
-    ap.add_argument('--loss-percent', type=float, default=d.loss_percent,
+    ap.add_argument('--loss-percent', type=float, default=None,
                     help='loss error limit of a branch: RMS of Re dYii / Re Yii of the port '
                          f'admittances, percent; 0 = off (default {d.loss_percent:g})')
     ap.add_argument('--no-refine', action='store_true',
@@ -106,6 +110,9 @@ def main(argv=None):
                     help='plots over all frequencies of the data, not only the fit band')
     ap.add_argument('--version', action='version', version=f'crcat {__version__}')
     args = ap.parse_args(argv)
+    for key, value in model.QUALITY[args.quality].items():
+        if getattr(args, key) is None:
+            setattr(args, key, value)
     try:
         'Ωμ'.encode(sys.stdout.encoding or 'ascii')
     except (UnicodeEncodeError, LookupError):

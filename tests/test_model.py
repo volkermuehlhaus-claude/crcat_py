@@ -502,6 +502,13 @@ def test_cli(tmp_path, capsys):
                      'dut_crcat.s2p', 'dut_crcat.json', 'dut_crcat.png', 'dut_crcat_error.png',
                      'dut_crcat_lrq.png', 'dut_crcat_schematic.png'}
     assert 'data check: 2 port(s)' in out and 'suited:' in out and 'good: 0.5 to 30 GHz' in out
+    main([str(src), '--quality', 'small', '--loss-percent', '40', '--check-only'])
+    out = capsys.readouterr().out
+    assert 'quality=small' in out and 'target_db=-30.0' in out and 'loss_percent=40.0' in out
+    assert 'pick=simplest' in out
+    assert model.quality_of(model.Options()) == 'standard'
+    assert model.quality_of(model.Options(pick='best')) == 'accurate'
+    assert model.quality_of(model.Options(target_db=-45)) is None
     main([str(src), '--check-only'])
     out = capsys.readouterr().out
     assert 'data check:' in out and 'model (' not in out

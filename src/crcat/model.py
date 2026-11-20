@@ -52,6 +52,21 @@ __all__ = ['Options', 'Model', 'Branch', 'Candidate', 'Coupled', 'extract', 'shi
 REQUIRE = ('positive', 'positive-r', 'passive', 'any')
 PICK = ('simplest', 'best')
 FORM = ('auto', 'pi', 'tee')
+# Model quality: one word for the error limits and the choice. 'standard' is the default of
+# Options; 'small' accepts more error for fewer elements; 'accurate' takes the lowest error.
+QUALITY = {
+    'small': dict(target_db=-30.0, reactance_percent=30.0, loss_percent=50.0, pick='simplest'),
+    'standard': dict(target_db=-40.0, reactance_percent=20.0, loss_percent=30.0, pick='simplest'),
+    'accurate': dict(target_db=-40.0, reactance_percent=20.0, loss_percent=30.0, pick='best'),
+}
+
+
+def quality_of(options):
+    """Name of the quality preset that ``options`` are equal to, or None."""
+    for name, values in QUALITY.items():
+        if all(getattr(options, key) == value for key, value in values.items()):
+            return name
+    return None
 EQUAL_ERROR = 1e-10      # RMS |S difference| below which two candidates count as equal
 EQUAL_SCORE = 1e-3       # scores closer than this (1 = at the limits) count as equal
 SHORT_OHM = 1e-6         # resistor written for a shorted leg that cannot be merged away

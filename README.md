@@ -107,6 +107,25 @@ plots (see below) and the schematics of all branches (`_crcat_schematic.png`).
 
 ![crcat-gui](doc/gui.png)
 
+The window asks for three things: the file, the fit band, and the model quality.
+
+| Model | Means | `--quality` |
+|---|---|---|
+| Small | fewer elements, more error allowed: -30 dB, reactance 30 %, loss 50 % | `small` |
+| Standard | fewest elements within -40 dB, reactance 20 %, loss 30 % (default) | `standard` |
+| Most accurate | the network with the lowest error for each branch | `accurate` |
+
+With a model at hand, another quality takes effect at once, without a new search. For the
+500 pH inductor above: Small and Standard 7 elements (-41.9 dB), Most accurate 14 elements
+(-48.7 dB); for the 170 fF MIM capacitor: 3 elements (-33.3 dB, C within 7 %), 5 elements
+(-49.7 dB) and 11 elements (C within 0.014 %).
+
+All other settings are behind "Advanced". A line next to the button names the ones that
+differ from their defaults, also while the panel is closed; "Defaults" sets them back. A
+limit changed by hand shows as model "Custom".
+
+![advanced settings](doc/gui_advanced.png)
+
 In the window, the Network column lists the other networks tried for each branch; choosing
 one updates netlist, errors, schematic and plot at once. The table shows the S-parameter,
 reactance and loss errors of each branch. The panel under the table shows
@@ -282,6 +301,7 @@ Main options (`crcat-netlist --help` lists all):
 | Option | Meaning |
 |---|---|
 | `--fmin`, `--fmax` (GHz) | fit band; the plot still shows all data |
+| `--quality small`, `standard`, `accurate` | error limits and choice in one word, see the table above; `--pick` and the three limit options override it |
 | `--require positive` | all element values positive (default) |
 | `--require positive-r` | resistors positive, L and C of either sign. Still passive, since only resistors dissipate |
 | `--require passive`, `any` | any signs if the branch stays passive; no restriction |
