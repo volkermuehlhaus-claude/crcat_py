@@ -639,7 +639,7 @@ class MainWindow(QMainWindow):
         text = (f'Model ({m.form} form): {m.n_elements()} elements, S-parameter error {m.error_db():.1f} dB rms '
                 f'in the fit band {m.freq[0] / 1e9:.6g} to {m.freq[-1] / 1e9:.6g} GHz.')
         if m.delay:
-            text += f' Line at each port: {m.delay * 1e12:.4g} ps, {m.line_z0:.4g} ohm.'
+            text += ' ' + m.lines_text()[0].upper() + m.lines_text()[1:] + '.'
         if m.line_note:
             text += '\n' + m.line_note[0].upper() + m.line_note[1:] + '.'
         if warnings:

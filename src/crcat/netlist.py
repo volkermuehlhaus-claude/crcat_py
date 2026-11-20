@@ -42,6 +42,11 @@ def _ports(model):
     return [f'p{i + 1}' for i in range(model.nports)]
 
 
+def _line_z0(model, port):
+    """Impedance of the line at a port ('p3')."""
+    return float(model.port_z0[int(port[1:]) - 1])
+
+
 def to_spice(model, name='crcat_model'):
     """SPICE subcircuit (ngspice, Xyce, HSPICE)."""
     lines = _header(model, '*')
@@ -50,7 +55,7 @@ def to_spice(model, name='crcat_model'):
         lines.append('* ' + comment)
         for ename, kind, n1, n2, value in part:      # for K: the two inductor names
             if kind == 'T':                          # line between a port and the lumped part
-                lines.append(f'{ename} {n1} 0 {n2} 0 Z0={model.line_z0:.6g} TD={value:.6g}')
+                lines.append(f'{ename} {n1} 0 {n2} 0 Z0={_line_z0(model, n1):.6g} TD={value:.6g}')
                 continue
             lines.append(f'{ename} {n1} {n2} {value:.6g}')
     lines.append(f'.ENDS {name}')
@@ -69,7 +74,8 @@ def to_spectre(model, name='crcat_model'):
                              f'ind1={n1} ind2={n2}')
                 continue
             if kind == 'T':
-                lines.append(f'    {ename} ({n1} 0 {n2} 0) tline z0={model.line_z0:.6g} td={value:.6g}')
+                lines.append(f'    {ename} ({n1} 0 {n2} 0) tline z0={_line_z0(model, n1):.6g} '
+                             f'td={value:.6g}')
                 continue
             prim, par = _SPECTRE[kind]
             lines.append(f'    {ename} ({n1} {n2}) {prim} {par}={value:.6g}')

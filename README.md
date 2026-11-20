@@ -207,7 +207,7 @@ port 1 --[ line ]--+-- lumped model --+--[ line ]-- port 2
 
 This happens by itself (`--delay auto`, the default), and only when it is needed:
 
-- **When.** Only for a 2-port that the data check finds longer than 90 degrees at the top of
+- **When.** Only for a part that the data check finds longer than 90 degrees at the top of
   the fit band. Inductors, capacitors and short parts get no line and the same model as
   before.
 - **Which line.** Its impedance is that of the part, sqrt(L / C) from the low-frequency L
@@ -237,7 +237,39 @@ degrees. With the part's impedance and 15 to 45 degrees left, the models were at
 -45 dB. With 60 degrees left they were at -34 to -38 dB, and with nothing left between
 -26 and -42 dB. A 50 ohm line taken from the 70 ohm line left -16 to -20 dB.
 
-The line is lossless: the loss of the part goes into the lumped elements. In the netlist
+With more than two ports, each port can get its own line. The data check looks for
+ports that are joined by a conductor (an inductance between them at low frequency) and
+takes each such group as lines that meet in one point: two ports are a through line, three
+or more a star, as in a T-junction. The low-frequency inductances give the length of each
+arm; a fit of a star of ideal lines to the data of the group then gives each arm its own
+impedance and delay. The lines are used if that star follows the data (-15 dB or better)
+and the longest way through it is over 90 degrees; all arms are then shortened by the same
+factor, so that 30 degrees are left on the longest way.
+
+```
+data check: 3 port(s), 0.5 to 100 GHz, 120 points: multi-port, self-resonance at 54.85 GHz
+            as lines to one point: p1 60 ohm 3 ps, p2 40 ohm 3 ps, p3 50 ohm 3 ps; 216 deg at the top of the band
+            limited: ports p1, p2, p3 are joined by conductors up to 216 deg long, distributed: a line at each of these ports is tried
+```
+
+This is tested on synthetic data only (ideal lines with a little loss, 0.5 to 100 GHz,
+lumped part with up to 3 elements per branch):
+
+| Data | With lines | Without |
+|---|---|---|
+| star of 50 ohm lines, 3 / 2 / 4 ps | -42.2 dB | -4.7 dB |
+| star of 60 / 40 / 50 ohm lines, 3 ps each | -42.0 dB | -2.7 dB |
+| star of four lines, 40 to 60 ohm, 2 to 4 ps, 20 fF where they meet | -43.3 dB | -5.0 dB |
+| 4-port, two separate lines (50 ohm 6 ps, 70 ohm 4 ps) | -43.2 dB | -9.1 dB |
+| the same with 0.5 fF between the lines at each end | -19.8 dB | -9.1 dB |
+
+The last row is the limit: lines at the ports with a lumped part between them cannot give
+a coupling between two long lines, because the coupling then sits outside the lines. The
+same holds for a ring of lines (a branch-line coupler) and for coupled lines. The estimates
+also need data that start where the part is still short (under 45 degrees); data of a
+narrow band high up get no lines.
+
+The lines are lossless: the loss of the part goes into the lumped elements. In the netlist
 it is a `T` element (Spectre `tline`), which not every simulator setup accepts in every
 analysis; `--delay off` gives a model of R, L, C only. `--delay` with a number (ps) and
 `--line-z0` (ohm) set a known feed line by hand, for any number of ports.
@@ -370,7 +402,7 @@ Main options (`crcat-netlist --help` lists all):
 | `--sequential` | pi form: fit the branches to ground to the port admittance minus the models, not the data, of the branches between ports |
 | `--no-coupling` | never use coupled coils |
 | `--check-only` | print the data check and stop |
-| `--delay auto`, `off`, or ps | line at each port, removed from the data before the fit, written as a `T` element (Spectre `tline`). auto (default): only for a distributed 2-port, see above; a number: this delay |
+| `--delay auto`, `off`, or ps | line at each port, removed from the data before the fit, written as a `T` element (Spectre `tline`). auto (default): only for a distributed part, see above; a number: this delay at all ports |
 | `--line-z0` (ohm) | impedance of the line of a given `--delay` (default: the reference impedance) |
 
 Limits:
@@ -380,8 +412,8 @@ Limits:
 - **Distributed parts.** A structure that is not small against the wavelength, or a net of
   strongly coupled conductors, is not a pi of small branches: for a 6-port feed structure
   12 of 21 branches of the data had a negative real part even below 40 GHz. The automatic
-  line at the ports is for 2-ports only; with more ports, `--delay` takes a known feed
-  line out.
+  lines at the ports cover through lines and lines that meet in one point, not coupled
+  lines or rings, see [above](#line-at-the-ports-for-a-distributed-part).
 - **Tee form for 2-ports only.** A tee has too few branches for a general n-port.
 - **One coupling factor per coil pair,** see above; and coupled loss that needs a negative
   resistance stays out unless `--require any`.

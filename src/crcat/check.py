@@ -46,13 +46,16 @@ class DataCheck:
     ``reasons``, ``form`` (suggested), ``fmax`` (suggested top frequency in Hz, or None),
     ``srf`` (first self-resonance in Hz, or None), ``line`` (dict with L, C, z0, delay,
     degrees at the band end, or None), ``port_line`` (the line at each port that suits a
-    distributed 2-port: dict with z0 and delay, or None), ``branches`` ({form: [BranchFacts]}), ``couplings``
+    distributed 2-port: dict with z0 and delay, or None), ``port_lines`` (the same for any
+    port count: one dict per port, or None), ``line_groups`` (multi-port: groups of ports
+    joined by a conductor, seen as lines: dicts with ports, z0, delay, degrees, fit_db), ``branches`` ({form: [BranchFacts]}), ``couplings``
     ([(ports, k)]), ``reciprocity`` and ``passive``."""
 
     def __init__(self):
         self.kind = self.verdict = self.form = None
         self.reasons, self.couplings, self.branches = [], [], {}
-        self.fmax = self.srf = self.line = self.port_line = None
+        self.fmax = self.srf = self.line = self.port_line = self.port_lines = None
+        self.line_groups = []
         self.nports = self.points = 0
         self.band = (0.0, 0.0)
         self.reciprocity = 0.0
@@ -73,6 +76,11 @@ class DataCheck:
             ln = self.line
             out.append(f'as a line: {ln["z0"]:.3g} ohm, {ln["delay"] * 1e12:.3g} ps, '
                        f'{ln["degrees"]:.0f} deg at the top of the band')
+        for g in self.line_groups:
+            arms = ', '.join(f'p{p} {z:.3g} ohm {t * 1e12:.3g} ps'
+                             for p, z, t in zip(g['ports'], g['z0'], g['delay']))
+            out.append(('as a line: ' if len(g['ports']) == 2 else 'as lines to one point: ')
+                       + f'{arms}; {g["degrees"]:.0f} deg at the top of the band')
         out.append(f'{self.verdict}: ' + '; '.join(self.reasons))
         return out
 
@@ -236,6 +244,16 @@ def check(network, fmin=None, fmax=None, target_db=-40.0):
         for name in sorted({f'p{p[0]} - p{p[1]}' for p, _ in c.couplings}):
             c.reasons.append(f'magnetic coupling at branch {name} (k about {coupled[name]:.2f}): '
                              f'coupled coils will be tried')
+    if c.port_line:
+        c.port_lines = [dict(c.port_line), dict(c.port_line)]
+    if n > 2:
+        c.line_groups, c.port_lines = _port_lines(f, y, z0)
+        if c.port_lines:
+            long = [g for g in c.line_groups if g['degrees'] > DISTRIBUTED_DEG]
+            text = ('ports ' + '; '.join(', '.join(f'p{p}' for p in g['ports']) for g in long)
+                    + f' are joined by conductors up to {max(g["degrees"] for g in long):.0f} deg '
+                    f'long, distributed: a line at each of these ports is tried')
+            c.verdict, c.reasons = 'limited', [text]     # the lines change what the rest is
     many = [b.name for b in signif if b.resonances > 2]
     if many and c.verdict != 'not suited':
         c.reasons.append('branch ' + ', '.join(many) + ' has more than two resonances in the band: '
@@ -243,3 +261,116 @@ def check(network, fmin=None, fmax=None, target_db=-40.0):
     if not c.passive:
         c.reasons.append('the data are not passive')
     return c
+
+
+# --- lines at the ports of a multi-port ------------------------------------------------------
+
+STAR_LOSS = 0.005        # loss of the line model used to find the arms (keeps tan finite)
+STAR_FIT_DB = -15.0      # the star of lines must follow the data at least this well
+BRANCH_OHM = 20.0        # a path between ports: reactance at the band end below this x z0
+
+
+def _star_s(w, z, td, c_centre, z0):
+    """S-parameters of lines (z, td) from each port to one common node with a capacitor."""
+    n = len(z)
+    d = np.empty((w.size, n), dtype=complex)
+    o = np.empty((w.size, n), dtype=complex)
+    for i in range(n):
+        th = w * td[i] * (1 - 1j * STAR_LOSS)
+        d[:, i], o[:, i] = -1j / (z[i] * np.tan(th)), 1j / (z[i] * np.sin(th))
+    yc = 1j * w * c_centre + d.sum(axis=1)
+    y = -np.einsum('fi,fj->fij', o, o) / yc[:, None, None]
+    for i in range(n):
+        y[:, i, i] += d[:, i]
+    return _model._y2s(y, z0)
+
+
+def _fit_star(w, s, z0, z, td):
+    """Arms (impedance, delay) of the star of lines closest to ``s``; start z, td. Returns
+    z, td and the RMS difference."""
+    from scipy.optimize import least_squares
+    n = len(z)
+    step = max(1, w.size // 60)
+    ww, ss = w[::step], s[::step]
+
+    def unpack(p):
+        return np.exp(p[:n]), np.exp(p[n:2 * n]), np.exp(p[2 * n])
+
+    def resid(p):
+        zz, tt, cc = unpack(p)
+        with np.errstate(all='ignore'):
+            r = (_star_s(ww, zz, tt, cc, z0) - ss).ravel()
+        r = np.where(np.isfinite(r), r, 10.0)
+        return np.concatenate([r.real, r.imag])
+
+    start = np.concatenate([np.log(z), np.log(td), [np.log(1e-17)]])
+    lo = np.concatenate([start[:2 * n] - np.log(3), [np.log(1e-18)]])
+    hi = np.concatenate([start[:2 * n] + np.log(3), [np.log(1e-12)]])
+    best = least_squares(resid, start, bounds=(lo, hi), max_nfev=300)
+    zz, tt, _ = unpack(best.x)
+    return zz, tt, float(np.sqrt(np.mean(best.fun ** 2) * 2))
+
+
+def _port_lines(f, y, z0):
+    """Lines at the ports of a multi-port, from the admittance matrix ``y`` at frequencies
+    ``f``: groups of ports joined by a conductor (an inductive branch between them at low
+    frequency) are taken as lines that meet in one point: two ports a through line, more a
+    star. Returns (groups, lines): the groups as dicts, and per port a dict z0, delay or
+    None if nothing is distributed."""
+    n = y.shape[-1]
+    w = 2 * np.pi * f
+    low = slice(0, max(4, f.size // 10))
+    b = np.zeros((n, n))                         # 1 / inductance between two ports
+    for i in range(n):
+        for j in range(i + 1, n):
+            v = y[low, i, j].imag * w[low]       # the same at all frequencies for an inductance
+            m = float(np.median(v))
+            if m > 0 and np.std(v) < 0.3 * m and w[-1] / m < BRANCH_OHM * z0:
+                b[i, j] = b[j, i] = m
+    cap = np.array([np.median(y[low, i, :].sum(axis=1).imag / w[low]) for i in range(n)])
+    seen, groups = set(), []
+    lines = [None] * n
+    for first in range(n):
+        comp, todo = [], [first]
+        while todo:
+            k = todo.pop()
+            if k not in seen:
+                seen.add(k)
+                comp.append(k)
+                todo += [j for j in range(n) if b[k, j] > 0 and j not in seen]
+        comp.sort()
+        ctot = float(cap[comp].sum()) if len(comp) > 1 else 0.0
+        if ctot <= 0:
+            continue
+        if len(comp) == 2:
+            arm = np.full(2, 0.5 / b[comp[0], comp[1]])
+        else:                                    # star: 1/L_ij = g_i g_j / sum(g), g = 1/L_arm
+            q = []
+            for i in comp:
+                vals = [b[i, j] * b[i, k] / b[j, k] for j in comp for k in comp
+                        if j < k and i not in (j, k) and b[i, j] > 0 and b[i, k] > 0 and b[j, k] > 0]
+                q.append(np.median(vals) if vals else 0.0)
+            if min(q) <= 0:
+                continue
+            arm = 1 / (np.sqrt(q) * np.sum(np.sqrt(q)))
+        zc = math.sqrt(float(arm.sum()) / ctot)  # start: one impedance for all arms
+        z, td = np.full(len(comp), zc), arm / zc
+        if math.degrees(w[0] * np.sort(td)[-2:].sum()) > LUMPED_DEG:
+            continue                             # the data start too high for these estimates
+        if math.degrees(w[-1] * np.sort(td)[-2:].sum()) <= 0.7 * DISTRIBUTED_DEG:
+            groups.append({'ports': [i + 1 for i in comp], 'z0': z.tolist(), 'delay': td.tolist(),
+                           'degrees': math.degrees(w[-1] * np.sort(td)[-2:].sum()), 'fit_db': None})
+            continue
+        # the group alone (other ports shorted), and the star of lines that follows it best
+        s_sub = _model._y2s(y[:, comp][:, :, comp], z0)
+        z, td, rms = _fit_star(w, s_sub, z0, z, td)
+        degrees = math.degrees(w[-1] * np.sort(td)[-2:].sum())
+        fit_db = 20 * math.log10(max(rms, 1e-12))
+        groups.append({'ports': [i + 1 for i in comp], 'z0': z.tolist(), 'delay': td.tolist(),
+                       'degrees': degrees, 'fit_db': fit_db})
+        if degrees > DISTRIBUTED_DEG and fit_db < STAR_FIT_DB:
+            for k, i in enumerate(comp):
+                lines[i] = {'z0': float(z[k]), 'delay': float(td[k] * (1 - LINE_REST_DEG / degrees))}
+    if all(v is None for v in lines):
+        return groups, None
+    return groups, [v or {'z0': z0, 'delay': 0.0} for v in lines]

@@ -26,6 +26,50 @@ def line(z0, delay, f, loss=0.0):
     return skrf.Network(frequency=skrf.Frequency.from_f(f, unit='hz'), s=s, z0=50)
 
 
+def _line_y(z0, delay, f, loss=0.01):
+    theta = 2 * np.pi * f * delay * (1 - 1j * loss)
+    return -1j / (z0 * np.tan(theta)), 1j / (z0 * np.sin(theta))
+
+
+def _network(y, f):
+    return skrf.Network(frequency=skrf.Frequency.from_f(f, unit='hz'), s=model._y2s(y, 50.0), z0=50)
+
+
+def two_lines(f, a=(50.0, 6e-12), b=(70.0, 4e-12), coupling=0.0):
+    """4-port: line a from port 1 to 3, line b from 2 to 4, a capacitor between the lines
+    at each end."""
+    y = np.zeros((f.size, 4, 4), dtype=complex)
+    for (i, j), (z0, delay) in (((0, 2), a), ((1, 3), b)):
+        d, o = _line_y(z0, delay, f)
+        y[:, i, i] += d
+        y[:, j, j] += d
+        y[:, i, j] += o
+        y[:, j, i] += o
+    jwc = 2j * np.pi * f * coupling
+    for i, j in ((0, 1), (2, 3)):
+        y[:, i, i] += jwc
+        y[:, j, j] += jwc
+        y[:, i, j] -= jwc
+        y[:, j, i] -= jwc
+    return _network(y, f)
+
+
+def star(f, arms, c_centre=0.0):
+    """n-port: a line (z0, delay) from each port to one common point with a capacitor."""
+    n = len(arms)
+    y = np.zeros((f.size, n + 1, n + 1), dtype=complex)
+    for i, (z0, delay) in enumerate(arms):
+        d, o = _line_y(z0, delay, f)
+        y[:, i, i] += d
+        y[:, n, n] += d
+        y[:, i, n] += o
+        y[:, n, i] += o
+    y[:, n, n] += 2j * np.pi * f * c_centre
+    reduced = y[:, :n, :n] - (np.einsum('fi,fj->fij', y[:, :n, n], y[:, n, :n])
+                              / y[:, n, n][:, None, None])
+    return _network(reduced, f)
+
+
 # --- data check -----------------------------------------------------------------------------
 
 def test_check_kinds_and_verdicts():
@@ -106,7 +150,7 @@ def test_automatic_line_is_dropped_when_it_does_not_help(monkeypatch):
 
     def wrong(*args, **kwargs):
         c = real(*args, **kwargs)
-        c.port_line = {'z0': 8.0, 'delay': 0.2e-12}
+        c.port_lines = [{'z0': 8.0, 'delay': 0.2e-12}] * 2
         return c
     monkeypatch.setattr(check, 'check', wrong)
     m = model.extract(net, model.Options(coupling=False, max_elements=2, refine=False))
@@ -116,6 +160,72 @@ def test_automatic_line_is_dropped_when_it_does_not_help(monkeypatch):
         assert m.error() < plain.error() and 'without it' in m.line_note
     else:
         assert np.isclose(m.error(), plain.error()) and m.line_note.startswith('no line')
+
+
+# --- lines at the ports of a multi-port ---------------------------------------------------------
+
+F100 = np.linspace(0.5e9, 100e9, 120)
+STAR = [(60.0, 3e-12), (40.0, 3e-12), (50.0, 3e-12)]         # 216 deg between two ports
+
+
+def test_shift_ports_with_one_line_per_port():
+    net = star(F100, STAR)
+    zl, td = np.array([60.0, 40.0, 50.0]), np.array([1e-12, 2e-12, 0.0])
+    other = net.copy()
+    other.renormalize(zl, s_def='power')
+    assert np.allclose(model._renormalize(net.s, np.full(3, 50.0), zl), other.s)
+    longer = model.shift_ports(net.s, F100, td, zl, 50.0)
+    assert not np.allclose(longer, net.s)
+    assert np.allclose(model.shift_ports(longer, F100, -td, zl, 50.0), net.s)
+    # one value for all ports, reference impedance: the plain phase shift
+    assert np.allclose(model.shift_ports(net.s, F100, 1e-12),
+                       net.s * np.exp(-4j * np.pi * F100 * 1e-12)[:, None, None])
+
+
+def test_check_finds_the_lines_of_a_multi_port():
+    c = check.check(star(F100, STAR))
+    (g,) = c.line_groups
+    assert g['ports'] == [1, 2, 3] and 210 < g['degrees'] < 222 and g['fit_db'] < -40
+    assert np.allclose(g['z0'], [60, 40, 50], rtol=0.02) and np.allclose(g['delay'], 3e-12, rtol=0.02)
+    assert np.allclose([v['delay'] for v in c.port_lines], 3e-12 * (1 - 30 / g['degrees']), rtol=0.02)
+    assert c.verdict == 'limited' and 'a line at each of these ports is tried' in c.reasons[0]
+    assert any(ln.startswith('as lines to one point: p1 60') for ln in c.lines())
+    # arms of different length, a fourth arm, a capacitor where they meet
+    arms = [(50.0, 2e-12), (60.0, 3e-12), (40.0, 3e-12), (50.0, 4e-12)]
+    (g,) = check.check(star(F100, arms, c_centre=20e-15)).line_groups
+    assert np.allclose(g['z0'], [50, 60, 40, 50], rtol=0.03)
+    assert np.allclose(g['delay'], [2e-12, 3e-12, 3e-12, 4e-12], rtol=0.03)
+    # two separate lines in a 4-port: two groups, each port the line of its group
+    c = check.check(two_lines(F100))
+    assert [g['ports'] for g in c.line_groups] == [[1, 3], [2, 4]]
+    assert np.allclose([v['z0'] for v in c.port_lines], [50, 70, 50, 70], rtol=0.02)
+    # nothing for a short part, and nothing when the data start where it is long already
+    assert check.check(star(F100, STAR), fmax=30e9).port_lines is None
+    assert check.check(star(np.linspace(60e9, 100e9, 80), STAR)).port_lines is None
+    lumped = make_network(3, {(1, 2): ('SerRL', [1.0, 0.3e-9]), (2, 3): ('SerRL', [1.0, 0.2e-9]),
+                              (1,): ('C', [20e-15]), (3,): ('C', [30e-15])})
+    assert check.check(lumped).port_lines is None
+
+
+def test_automatic_lines_for_a_star():
+    net = star(F100, STAR)
+    m = model.extract(net, model.Options(coupling=False, max_elements=3))
+    assert m.error_db() < -35 and not m.same_lines()
+    assert np.allclose(m.port_z0, [60, 40, 50], rtol=0.02) and np.all(m.port_delay > 2e-12)
+    assert m.summary().count('lines at the ports') == 2 and 'chosen automatically' in m.line_note
+    assert [v['port'] for v in m.to_dict()['port_lines']] == [1, 2, 3]
+    text = netlist.to_spice(m, 'x')
+    assert f'T_p2 p2 0 p2_c 0 Z0={m.port_z0[1]:.6g} TD={m.port_delay[1]:.6g}' in text
+    assert f'tline z0={m.port_z0[0]:.6g} td={m.port_delay[0]:.6g}' in netlist.to_spectre(m, 'x')
+    plain = model.extract(net, model.Options(coupling=False, max_elements=3, delay='off'))
+    assert plain.delay == 0 and plain.error_db() > -15
+
+
+def test_automatic_lines_for_two_lines_in_a_four_port():
+    m = model.extract(two_lines(F100), model.Options(coupling=False, max_elements=3))
+    assert m.error_db() < -35
+    assert np.allclose(m.port_z0, [50, 70, 50, 70], rtol=0.02)
+    assert np.allclose(m.port_delay[[0, 1]], m.port_delay[[2, 3]], rtol=0.01)
 
 
 # --- verdict and suggestions ----------------------------------------------------------------
@@ -222,7 +332,7 @@ def test_testbench_text():
     assert 'PORT2 (p2 0) port r=50 num=2' in text and 'sp1 sp ports=[PORT1 PORT2]' in text
 
 
-@pytest.mark.parametrize('case', ['pi', 'coupled', 'line', 'auto line'])
+@pytest.mark.parametrize('case', ['pi', 'coupled', 'line', 'auto line', 'star'])
 def test_netlist_in_ngspice(case, tmp_path):
     """The written netlist, simulated by ngspice, gives the S-parameters of the model."""
     exe = find_ngspice()
@@ -234,6 +344,9 @@ def test_netlist_in_ngspice(case, tmp_path):
         m = model.extract(make_transformer(0.3e-9, 0.3e-9, -0.4, 1.0, 1.0, rc=0.5),
                           model.Options(form='pi', pick='best'))
         assert m.couplings
+    elif case == 'star':
+        m = model.extract(star(F100, STAR), model.Options(coupling=False, max_elements=3))
+        assert not m.same_lines()
     elif case == 'auto line':
         m = model.extract(line(70.0, 6e-12, np.linspace(0.5e9, 100e9, 120), loss=0.01),
                           model.Options(coupling=False))
