@@ -45,6 +45,7 @@ def test_gui_extract_and_save(app, tmp_path):
     assert win.model.error_db() < -150 and 'pi form; DC paths' in win.status.text() and 'model (pi form): 5 elements' in win.status.toolTip()
     assert '.SUBCKT dut_model p1 p2' in win.netlist_view.toPlainText()
     # the schematic shows the selected row
+    win.whole_model.setChecked(False)                # the selected row alone
     def shown():
         return win.schematic.axes[0].get_title()
     assert win.schematic_row() is win.model.rows()[0] and shown() == 'p1 - gnd: CR3 C'
@@ -300,6 +301,45 @@ def test_frequency_edit(app):
     assert e.text() == '' and seen[-1] == 0 and len(seen) == 6
     e.setText('4')                               # typing alone does nothing yet
     assert e.value() == 0 and len(seen) == 6
+
+
+def test_gui_whole_model_schematic(app, tmp_path):
+    from crcat import schematic
+    src = tmp_path / 'dut.s2p'
+    make_network(2, TWO_PORT).write_touchstone(str(src.with_suffix('')))
+    win = MainWindow()
+    assert not win.whole_model.isEnabled()
+    assert win.set_file(src)
+    win.run()
+    wait_for(app, lambda: win.model is not None and win.worker is None)
+    # a small 2-port: the whole model, the selected row in colour
+    assert win.whole_model.isEnabled() and win.whole_model.isChecked() and win.shows_whole_model()
+    ax = win.schematic.axes[0]
+    assert ax.get_title() == '' and {'p1', 'p2'} <= {t.get_text() for t in ax.texts}
+
+    def marked():
+        return sorted(t.get_text().split('\n')[0] for t in win.schematic.axes[0].texts
+                      if t.get_color() == schematic.HIGHLIGHT)
+    rows = win.model.rows()
+    for k, row in enumerate(rows):
+        win.table.setCurrentCell(k, 0)
+        assert len(marked()) == row.chosen.n_elements
+    # the switch: the selected row alone, with its title
+    win.whole_model.setChecked(False)
+    assert not win.shows_whole_model()
+    assert win.schematic.axes[0].get_title().startswith(rows[-1].name)
+    win.whole_model.setChecked(True)
+    assert win.schematic.axes[0].get_title() == '' and len(marked()) == rows[-1].chosen.n_elements
+    # the choice is kept when another candidate is taken, and off again for no model
+    win.whole_model.setChecked(False)
+    win.table.cellWidget(0, 1).setCurrentIndex(1)
+    assert not win.whole_model.isChecked() and win.whole_model.isEnabled()
+    win.form.setCurrentIndex(win.form.findData('pi'))        # removes the model
+    assert win.model is None and not win.whole_model.isEnabled()
+    win.run()
+    wait_for(app, lambda: win.model is not None and win.worker is None)
+    assert win.whole_model.isChecked()                       # a new model: the default again
+    win.close()
 
 
 def test_gui_cancel(app, tmp_path):

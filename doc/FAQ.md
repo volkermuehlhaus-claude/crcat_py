@@ -181,6 +181,10 @@ good: 1 to 100 GHz: 5 elements, S-parameters within -49.7 dB, C within 0.22 %, Q
 The plots show the same against frequency. For an inductor or capacitor the window opens
 the plot of L (or C), R and Q.
 
+For a part with one or two ports the window and the saved `_crcat_schematic.png` show the
+whole model as one circuit, as it would be drawn by hand; the element names are those of
+the netlist branch by branch.
+
 ## Small, Standard or Most accurate?
 
 Three choices of how much error to accept for how few elements:

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog
 from .. import __version__, advice, check, data, model, netlist
 from ..cli_netlist import write_outputs
 from ..plots import VIEWS, compare, views_for
-from ..schematic import draw_row
+from ..schematic import can_draw_full, draw_full, draw_row, is_simple
 from .frequency_edit import FrequencyEdit
 from .worker import ExtractWorker
 
@@ -265,10 +265,23 @@ class MainWindow(QMainWindow):
         self.schematic = Figure(figsize=(6, 2.4))
         self.schematic_canvas = FigureCanvasQTAgg(self.schematic)
         self.schematic_canvas.setMinimumHeight(170)
-        self.schematic_canvas.setToolTip('Schematic of the selected row')
+        self.schematic_canvas.setToolTip('Schematic: the whole model with the selected row in '
+                                         'colour, or the selected row alone')
+        self.whole_model = QCheckBox('Show whole model')
+        self.whole_model.setEnabled(False)
+        self.whole_model.setToolTip(
+            'Show the whole model as one circuit, the row selected in the table in colour '
+            '(models with one or two ports). Off: the selected row alone.')
+        self.whole_model.toggled.connect(lambda *_: self._show_schematic())
+        panel = QWidget()
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setSpacing(0)
+        panel_layout.addWidget(self.whole_model)
+        panel_layout.addWidget(self.schematic_canvas, 1)
         left = QSplitter(Qt.Orientation.Vertical)
         left.addWidget(self.table)
-        left.addWidget(self.schematic_canvas)
+        left.addWidget(panel)
         left.addWidget(self.netlist_view)
         left.setSizes([190, 230, 200])
         self.figure = Figure(figsize=(6, 5))
@@ -584,6 +597,7 @@ class MainWindow(QMainWindow):
         self.netlist_view.clear()
         self.view.clear()
         self.copy_button.setEnabled(False)
+        self.whole_model.setEnabled(False)
         self.assessment = None
         self.readout.clear()
         self.marker_f = None
@@ -657,6 +671,9 @@ class MainWindow(QMainWindow):
         self.model = m
         self._finish('')
         self.save_button.setEnabled(True)
+        self.whole_model.blockSignals(True)      # a new model: the whole circuit if it is small
+        self.whole_model.setChecked(is_simple(m))
+        self.whole_model.blockSignals(False)
         self._fill_table()
         first = self.view.count() == 0
         self._refresh()
@@ -806,10 +823,18 @@ class MainWindow(QMainWindow):
         k = self.table.currentRow()
         return rows[k] if 0 <= k < len(rows) else rows[0]
 
+    def shows_whole_model(self):
+        """True if the schematic panel shows the whole model, not one row."""
+        return (self.model is not None and self.whole_model.isChecked()
+                and can_draw_full(self.model))
+
     def _show_schematic(self):
         row = self.schematic_row()
         self.schematic.clear()
-        if row is not None:
+        self.whole_model.setEnabled(self.model is not None and can_draw_full(self.model))
+        if row is not None and self.shows_whole_model():
+            draw_full(self.schematic.add_axes([0.01, 0.01, 0.98, 0.98]), self.model, row)
+        elif row is not None:
             draw_row(self.schematic.subplots(), row)
             self.schematic.tight_layout()
         self.schematic_canvas.draw_idle()

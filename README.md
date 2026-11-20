@@ -165,9 +165,22 @@ search runs, the settings are locked.
 
 In the window, the Network column lists the other networks tried for each branch; choosing
 one updates netlist, errors, schematic and plot at once. The table shows the S-parameter,
-reactance and loss errors of each branch. The panel under the table shows
-the schematic of the selected row with its element values; coupled coils are drawn as a
-pair with their coupling factor:
+reactance and loss errors of each branch.
+
+The panel under the table shows the schematic. For a model with one or two ports it is
+the whole circuit, with the row selected in the table in colour: the branch between the
+ports along the top and the branches to ground hanging down (pi form), or two legs along
+the top and the centre leg down (tee form). Lines at the ports are boxes with their
+impedance and delay, coupled coils hang from the two ports with their coupling factor,
+and a grey note names the resistor that the netlist adds at a node without a DC path.
+Unticking "Show whole model" gives the selected row alone, which is the default for a model with
+more than 14 elements and the only view for more than two ports. The saved
+`_crcat_schematic.png` is the same picture:
+
+![whole model](doc/schematic_full.png)
+
+For three and more ports each row has its own picture; coupled coils are drawn as a pair
+with their coupling factor:
 
 ![coupled coils in crcat-gui](doc/gui_coupled.png)
 
