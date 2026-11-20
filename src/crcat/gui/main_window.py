@@ -26,8 +26,11 @@ QUALITY_TEXT = {'small': 'Small', 'standard': 'Standard', 'accurate': 'Most accu
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, settings=None):
+        """``settings``: a QSettings to remember the last data file and the folder of the
+        results between sessions (crcat-gui passes one); None: nothing is remembered."""
         super().__init__()
+        self.settings = settings
         self.setWindowTitle(f'crcat {__version__}: S-parameters to lumped-element netlist')
         self.resize(1250, 760)
         self.network = None
@@ -334,8 +337,25 @@ class MainWindow(QMainWindow):
 
     # --- file ---------------------------------------------------------------------------
 
+    def remembered(self, key):
+        """A path kept from the last session ('' if none)."""
+        return str(self.settings.value(key, '') or '') if self.settings is not None else ''
+
+    def remember(self, key, value):
+        if self.settings is not None:
+            self.settings.setValue(key, str(value))
+
+    def restore_last_file(self):
+        """Load the data file of the last session, if it is still there."""
+        path = self.remembered('data_file')
+        try:
+            return bool(path) and pathlib.Path(path).is_file() and self.set_file(path)
+        except OSError:                          # a drive that is not connected
+            return False
+
     def browse(self):
-        start = str(pathlib.Path(self.file_edit.text()).parent) if self.file_edit.text() else ''
+        start = (str(pathlib.Path(self.file_edit.text()).parent) if self.file_edit.text()
+                 else self.remembered('data_folder'))
         path, _ = QFileDialog.getOpenFileName(self, 'Touchstone file', start,
                                               'Touchstone (*.s*p *.y*p *.z*p);;All files (*)')
         if path:
@@ -359,6 +379,9 @@ class MainWindow(QMainWindow):
             return False
         new_file = path != getattr(self, '_loaded', '')
         self._loaded = path
+        full = pathlib.Path(path).resolve()
+        self.remember('data_file', full)
+        self.remember('data_folder', full.parent)
         self.model = None
         self.save_button.setEnabled(False)
         self.clear_results()
@@ -779,9 +802,12 @@ class MainWindow(QMainWindow):
     # --- save ---------------------------------------------------------------------------
 
     def save(self):
-        folder = QFileDialog.getExistingDirectory(self, 'Folder for the results',
-                                                  str(pathlib.Path(self._loaded).parent))
+        start = self.remembered('result_folder')
+        if not start or not pathlib.Path(start).is_dir():
+            start = str(pathlib.Path(self._loaded).parent)
+        folder = QFileDialog.getExistingDirectory(self, 'Folder for the results', start)
         if folder:
+            self.remember('result_folder', folder)
             self.save_to(folder)
 
     def save_to(self, folder):

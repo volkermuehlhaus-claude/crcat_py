@@ -218,6 +218,35 @@ def test_gui_quality_and_advanced(app, tmp_path):
     win.close()
 
 
+def test_gui_remembers_the_last_data_file(app, tmp_path):
+    from PySide6.QtCore import QSettings
+    src = tmp_path / 'data' / 'dut.s2p'
+    src.parent.mkdir()
+    make_network(2, TWO_PORT).write_touchstone(str(src.with_suffix('')))
+    ini = str(tmp_path / 'settings.ini')
+    win = MainWindow(QSettings(ini, QSettings.Format.IniFormat))
+    assert win.remembered('data_file') == '' and not win.restore_last_file()
+    assert win.set_file(src)
+    win.settings.sync()
+    win.close()
+    # the next session: the file is loaded again, Browse starts in its folder
+    again = MainWindow(QSettings(ini, QSettings.Format.IniFormat))
+    assert again.remembered('data_folder') == str(src.parent.resolve())
+    assert again.restore_last_file() and again.network is not None
+    assert again.file_edit.text() == str(src.resolve()) and again.verdict.text() == 'suited'
+    again.close()
+    # the file is gone: nothing is loaded, the folder is still remembered
+    src.unlink()
+    gone = MainWindow(QSettings(ini, QSettings.Format.IniFormat))
+    assert not gone.restore_last_file() and gone.network is None and gone.file_edit.text() == ''
+    assert gone.remembered('data_folder') == str(src.parent.resolve())
+    gone.close()
+    # without settings nothing is remembered (and nothing is written)
+    plain = MainWindow()
+    assert plain.remembered('data_file') == '' and not plain.restore_last_file()
+    plain.close()
+
+
 def test_gui_cancel(app, tmp_path):
     src = tmp_path / 'dut.s2p'
     make_network(2, TWO_PORT).write_touchstone(str(src.with_suffix('')))

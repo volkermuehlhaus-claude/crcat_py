@@ -134,7 +134,9 @@ plots (see below) and the schematics of all branches (`_crcat_schematic.png`).
 
 ![crcat-gui](doc/gui.png)
 
-The window asks for three things: the file, the fit band, and the model quality.
+The window asks for three things: the file, the fit band, and the model quality. It
+remembers the last data file and loads it at the next start; "Browse" opens in its
+folder, and the save dialog in the folder of the last results.
 
 | Model | Means | `--quality` |
 |---|---|---|

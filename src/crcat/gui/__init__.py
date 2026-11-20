@@ -14,8 +14,11 @@ def main(argv=None):
     from .main_window import MainWindow
     argv = sys.argv if argv is None else argv
     app = QApplication.instance() or QApplication(argv)
-    win = MainWindow()
+    from PySide6.QtCore import QSettings
+    win = MainWindow(QSettings('crcat', 'crcat-gui'))
     if len(argv) > 1:
         win.set_file(argv[1])
+    else:
+        win.restore_last_file()
     win.show()
     return app.exec()
