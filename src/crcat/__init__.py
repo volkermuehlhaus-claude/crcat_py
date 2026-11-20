@@ -5,7 +5,7 @@ to five elements, with closed-form synthesis equations and transforms between eq
 networks.
 """
 
-__version__ = '0.5.0'
+__version__ = '0.6.0'
 
 from .catalog import Catalog, Network, load                       # noqa: E402
 from .component import Component, format_value                   # noqa: E402

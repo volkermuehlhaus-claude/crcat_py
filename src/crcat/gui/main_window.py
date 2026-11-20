@@ -63,13 +63,23 @@ class MainWindow(QMainWindow):
         self.target.setValue(defaults.target_db)
         self.target.setToolTip('Error limit per branch: RMS difference of the S-parameters '
                                'that the branch model may cause')
-        self.branch_percent = QDoubleSpinBox(decimals=0, minimum=0, maximum=100, suffix=' %')
-        self.branch_percent.setValue(defaults.branch_percent)
-        self.branch_percent.setSpecialValueText('off')
-        self.branch_percent.setToolTip(
-            'Error limit of the branch itself: RMS of |Y model - Y data| / |Y data|. Keeps '
-            'R and Q right for parts that are nearly a through or an open in the '
-            'reference impedance. Off: S-parameters only.')
+        self.reactance_percent = QDoubleSpinBox(decimals=0, minimum=0, maximum=100, suffix=' %')
+        self.reactance_percent.setValue(defaults.reactance_percent)
+        self.reactance_percent.setSpecialValueText('off')
+        self.reactance_percent.setToolTip(
+            'Error limit of the port reactance: what a branch does to Im Yii of the ports '
+            '(other ports shorted), relative to |Yii|')
+        self.loss_percent = QDoubleSpinBox(decimals=0, minimum=0, maximum=100, suffix=' %')
+        self.loss_percent.setValue(defaults.loss_percent)
+        self.loss_percent.setSpecialValueText('off')
+        self.loss_percent.setToolTip(
+            'Error limit of the port loss: what a branch does to Re Yii of the ports, relative '
+            'to Re Yii. Keeps R and Q right where the loss is a small part of the admittance '
+            '(high Q).')
+        self.refine = QCheckBox('Refine values')
+        self.refine.setChecked(defaults.refine)
+        self.refine.setToolTip('Refine the element values of the best networks by a bounded '
+                               'least-squares fit on all error measures')
         self.max_elements = QSpinBox(minimum=1, maximum=5)
         self.max_elements.setValue(defaults.max_elements)
         self.form = QComboBox()
@@ -95,9 +105,11 @@ class MainWindow(QMainWindow):
         form3.addRow('Error limit, S-parameters', self.target)
         form3.addRow('Elements per branch, up to', self.max_elements)
         form4 = QFormLayout()
-        form4.addRow('Error limit, branch', self.branch_percent)
+        form4.addRow('Error limit, reactance', self.reactance_percent)
+        form4.addRow('Error limit, loss', self.loss_percent)
         form4.addRow('Form', self.form)
         form4.addRow('', self.coupling)
+        form4.addRow('', self.refine)
         row_opt = QHBoxLayout()
         for form in (form1, form2, form3, form4):
             row_opt.addLayout(form)
@@ -126,9 +138,9 @@ class MainWindow(QMainWindow):
         row_run.addWidget(self.save_button)
 
         # --- results ---
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(['Branch', 'Network', 'S error', 'Branch error',
-                                              'Element values'])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(['Branch', 'Network', 'S error', 'X error',
+                                              'Loss error', 'Element values'])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -240,7 +252,8 @@ class MainWindow(QMainWindow):
         return model.Options(
             fmin=self.fmin.value() * 1e9 or None, fmax=self.fmax.value() * 1e9 or None,
             require=self.require.currentData(), pick=self.pick.currentData(),
-            target_db=self.target.value(), branch_percent=self.branch_percent.value(),
+            target_db=self.target.value(), reactance_percent=self.reactance_percent.value(),
+            loss_percent=self.loss_percent.value(), refine=self.refine.isChecked(),
             max_elements=self.max_elements.value(),
             form=self.form.currentData(), coupling=self.coupling.isChecked())
 
@@ -303,14 +316,14 @@ class MainWindow(QMainWindow):
                 for c in r.candidates[:MAX_ALTERNATIVES]:
                     mark = '' if c.score <= r.limit else '  (above limit)'
                     combo.addItem(f'{c.label}, {c.n_elements} el., {c.error_db:.1f} dB, '
-                                  f'{c.relative_text()}{mark}')
+                                  f'X {c.reactance_text()}, loss {c.loss_text()}{mark}')
                 combo.setToolTip('Other networks that were tried for this branch')
                 combo.currentIndexChanged.connect(
                     lambda index, b=m.branches.index(r): self._choose(b, index))
                 self.table.setCellWidget(row, 1, combo)
             else:
                 self.table.setItem(row, 1, QTableWidgetItem(r.label))
-            for col in (2, 3, 4):
+            for col in (2, 3, 4, 5):
                 self.table.setItem(row, col, QTableWidgetItem(''))
         self.table.resizeColumnToContents(0)
         self.table.setColumnWidth(1, 300)
@@ -326,9 +339,10 @@ class MainWindow(QMainWindow):
         for row, r in enumerate(m.rows()):
             shown = r.chosen if isinstance(r, model.Branch) else r
             self.table.item(row, 2).setText(f'{shown.error_db:.1f} dB')
-            self.table.item(row, 3).setText(
-                shown.relative_text() if isinstance(r, model.Branch) else '-')
-            self.table.item(row, 4).setText(shown.values_text())
+            branch = isinstance(r, model.Branch)
+            self.table.item(row, 3).setText(shown.reactance_text() if branch else '-')
+            self.table.item(row, 4).setText(shown.loss_text() if branch else '-')
+            self.table.item(row, 5).setText(shown.values_text())
         warnings = m.warnings()
         text = (f'Model ({m.form} form): {m.n_elements()} elements, S-parameter error {m.error_db():.1f} dB rms '
                 f'in the fit band {m.freq[0] / 1e9:.6g} to {m.freq[-1] / 1e9:.6g} GHz.')

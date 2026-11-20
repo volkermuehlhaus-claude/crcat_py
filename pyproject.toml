@@ -16,6 +16,7 @@ dependencies = [
     "mpmath",
     "numpy",
     "scikit-rf",
+    "scipy",
 ]
 
 [project.scripts]

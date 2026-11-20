@@ -146,36 +146,63 @@ def low_impedance_inductor():
                         f=np.linspace(0.5e9, 60e9, 80))
 
 
-def test_branch_error_protects_the_resistance():
+def test_port_loss_error_protects_the_resistance():
     # 0.3 ohm in series with 60 pH, logarithmic frequencies: nearly a through in 50 ohm
     f = np.geomspace(0.05e9, 20e9, 60)
     net = make_network(2, {(1, 2): ('SerRL', [0.3, 60e-12])}, f=f)
     m = model.extract(net, model.Options(form='pi', coupling=False))
     b = m.branches[2]
     c = b.chosen
-    assert c.label == 'CR7 SerRL' and c.relative < 1e-6 and c.score <= 1
-    assert np.allclose(c.component.values[0], [0.3, 60e-12], rtol=1e-6)
-    assert '%' in m.summary()
-    # the same branch without its resistance: fine by the S-parameters, wrong for the branch
-    y = net.y.copy()
+    assert c.label.startswith('CR7 SerRL') and c.loss < 1e-6 and c.score <= 1
+    assert np.allclose(c.component.values[0], [0.3, 60e-12], rtol=1e-5)
+    assert 'loss' in m.summary() and 'X' in m.summary()
+    # the same branch without its resistance: fine by the S-parameters, the loss of the
+    # ports entirely wrong (it is all in this branch)
+    s = model._BranchSearch.__new__(model._BranchSearch)
     y_l = 1 / (2j * np.pi * f * 60e-12)
-    model._stamp(y, (1, 2), y_l - b.y)
-    s_error = model._rms(model._y2s(y, 50.0) - net.s)
-    relative = np.sqrt(np.mean(np.abs(y_l - b.y) ** 2 / np.abs(b.y) ** 2))
-    assert s_error < 0.01 and relative > 0.5              # passes -40 dB, 50 % off
-    # the score uses the larger of the two, each over its limit
-    opt = m.options
-    assert max(s_error / opt.target, 100 * relative / opt.branch_percent) > 2
-    assert s_error / model.Options(branch_percent=0).target < 1
+    sd = model._Data(f, (net.y + net.y.transpose(0, 2, 1)) / 2, net.s, 50.0, None, m.options,
+                     None)
+
+    def diff(yc):
+        y = sd.y.copy()
+        model._stamp(y, (1, 2), yc - b.y)
+        return sd.y_diff(y)
+    search = model._BranchSearch(b, diff, sd, crcat.load('base'), m.options, lambda *a: None)
+    score, s_error, ex, el = search.measure(y_l)
+    assert s_error < 0.01 and el > 0.99                     # passes -40 dB, loss 100 % off
+    assert score > 3
     with pytest.raises(ValueError):
-        model.extract(net, model.Options(branch_percent=-1))
+        model.extract(net, model.Options(loss_percent=-1))
 
 
-def test_negligible_branch_stays_open_with_the_branch_limit():
+def test_netlist_admittance_matches_the_catalog():
+    cat = crcat.load('base')
+    s = 2j * np.pi * F
+    for name in ('SerRLC', 'XXXII-39', 'XXXIII-40', 'X-1'):
+        comp = Component(name, cat, values=[v * 1e-9 if k else v for k, v in
+                                            enumerate([3.0] + [0.2] * 4)][:len(cat[name].symVn)])
+        y = model.netlist_admittance(comp.network.connections, comp.values[0], s)
+        assert np.allclose(y, comp.eval(F, 0), rtol=1e-9), name
+
+
+def test_refinement_improves_and_keeps_signs():
+    # a branch whose resistance rises with frequency (skin effect): a series R-L from the
+    # closed-form fit gets the reactance, the refinement moves its R towards the data
+    f = np.linspace(0.5e9, 40e9, 60)
+    net = make_network(2, {(1, 2): ('X-1', [0.5, 0.4e-9, 2.0, 0.1e-9])}, f=f)
+    opt = dict(form='pi', coupling=False, max_elements=2)
+    plain = model.extract(net, model.Options(refine=False, **opt)).branches[2].chosen
+    refined = model.extract(net, model.Options(**opt)).branches[2].chosen
+    assert refined.refined and refined.score < plain.score
+    assert refined.loss < plain.loss
+    assert all(v > 0 for v in refined.component.values[0])
+
+
+def test_negligible_branch_stays_open_with_the_port_limits():
     # a tiny capacitance to ground: no network is wanted for it, whatever its own error
     parts = {(1,): ('C', [0.02e-15]), (1, 2): ('SerRL', [2.0, 0.4e-9])}
     m = model.extract(make_network(2, parts))
-    assert chosen(m)[(1,)].label == 'open' and chosen(m)[(1,)].relative is None
+    assert chosen(m)[(1,)].label == 'open'
 
 
 # --- plots ------------------------------------------------------------------------------
@@ -265,8 +292,11 @@ def test_auto_takes_the_tee_form_when_pi_fails():
 
 def test_tee_with_shorted_legs():
     # only the center leg: both series legs are shorts; one merges the center node into
-    # p1, the other becomes a resistor of 1e-6 ohm between the ports
-    m = model.extract(make_tee(None, None, TEE[2]), model.Options(form='tee', pick='best'))
+    # p1, the other becomes a resistor of 1e-6 ohm between the ports. Port 1 is then
+    # shorted to port 2 and its admittance is infinite: S-parameter error only.
+    m = model.extract(make_tee(None, None, TEE[2]),
+                      model.Options(form='tee', pick='best', reactance_percent=0,
+                                    loss_percent=0))
     assert [b.chosen.label for b in m.branches[:2]] == ['short', 'short']
     assert m.error_db() < -150
     text = netlist.to_spice(m, 'dut')

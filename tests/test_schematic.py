@@ -27,7 +27,9 @@ def test_branch_rows(tmp_path):
 
 
 def test_open_and_short_rows():
-    m = model.extract(make_tee(None, TEE[1], TEE[2]), model.Options(form='tee', pick='best'))
+    m = model.extract(make_tee(None, TEE[1], TEE[2]),
+                      model.Options(form='tee', pick='best', reactance_percent=0,
+                                    loss_percent=0))
     assert m.branches[0].chosen.label == 'short'
     fig = schematic.figure_model(m)
     assert 'short' in texts(fig) and 'c' in texts(fig)

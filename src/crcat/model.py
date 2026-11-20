@@ -12,15 +12,24 @@ a tee by nature; in the pi form its loss can end up in a branch with a negative 
 negative inductance (and resistance) in the branch between them. Such a triangle of
 branches is replaced by two coils with a coupling factor, and a common resistor if needed.
 
-For every branch the candidates are judged in two ways. (1) What they do to the
+For every branch the candidates are judged in three ways. (1) What they do to the
 S-parameters: the branch in the data is replaced by the candidate, and the RMS difference
-of all S-parameters is the candidate's error. (2) How well they follow the branch itself:
-the RMS of |Y candidate - Y data| / |Y data|. The second measure is needed for parts that
-are nearly a through or an open in the reference impedance: there, a wrong series
-resistance hardly shows in the S-parameters. A candidate's score is the larger of the two
-errors, each divided by its limit. The default choice is the network with the fewest
-elements, all positive, whose score is within 1; "open" (or "short" for a series leg) is a
-candidate too and is judged by the S-parameters only, so negligible branches drop out.
+of all S-parameters is the candidate's error. (2) and (3), what it does to the input
+admittance Yii of each port (all other ports shorted): reactance, the RMS of Im dYii / |Yii|,
+and loss, the RMS of Re dYii / |Re Yii|; the port with the largest error counts. The loss
+error compares a branch's loss with the loss of the whole port, so an error in the series
+resistance of an inductor counts fully however high its Q, while the loss of a small
+parasitic branch hardly counts. Port losses below |Yii| / 100 count as none. The port
+measures are needed for parts that are nearly a through or an open in the reference
+impedance, and for the loss of high-Q parts: neither shows in the S-parameters. A
+candidate's score is the largest of the three errors, each divided by its limit.
+
+Candidates get their element values from the closed-form synthesis of a rational fit,
+which does not aim at the loss. With ``refine`` the best few networks of each element count
+are then refined: a bounded least-squares fit of their element values on all three
+measures, signs kept. The default choice is the network with the fewest elements, all
+positive, whose score is within 1; "open" (or "short" for a series leg) is a candidate too
+and is judged by the S-parameters only, so negligible branches drop out.
 
 No printing, no plotting, no GUI here: :func:`extract` returns a :class:`Model`, and takes
 ``progress`` and ``cancel`` callbacks.
@@ -43,8 +52,13 @@ REQUIRE = ('positive', 'positive-r', 'passive', 'any')
 PICK = ('simplest', 'best')
 FORM = ('auto', 'pi', 'tee')
 EQUAL_ERROR = 1e-10      # RMS |S difference| below which two candidates count as equal
+EQUAL_SCORE = 1e-3       # scores closer than this (1 = at the limits) count as equal
 SHORT_OHM = 1e-6         # resistor written for a shorted leg that cannot be merged away
 SHORT_SIEMENS = 1e12     # admittance standing in for a series leg of zero impedance
+LOSS_FLOOR_Q = 100       # losses below |Z| / LOSS_FLOOR_Q count as none (loss error)
+REFINE_SPAN = 1e3        # refinement keeps each element within this factor of its start
+REFINE_TRY = 6           # networks synthesized per element count for the refinement
+REFINE_BEST = 3          # of those, the best ones are refined
 K_MAX = 0.999            # largest coupling factor accepted
 
 
@@ -59,8 +73,9 @@ class Options:
     pick: 'simplest' (fewest elements within the error limit) or 'best' (lowest error;
         the fewest elements among practically equal errors).
     target_db: limit of the S-parameter error, RMS |S difference| in dB (-40 dB = 0.01).
-    branch_percent: limit of the branch error, RMS |Y - Y data| / |Y data| in percent;
-        0 switches this measure off (S-parameters only).
+    reactance_percent: limit of the port reactance error of a branch, in percent; 0 = off.
+    loss_percent: limit of the port loss error of a branch, in percent; 0 = off.
+    refine: refine the element values of the best networks (bounded least squares).
     tolerance: if no candidate reaches both limits, candidates up to tolerance x the best
         score are accepted.
     max_elements: largest number of elements per branch (1..5).
@@ -77,7 +92,9 @@ class Options:
     require: str = 'positive'
     pick: str = 'simplest'
     target_db: float = -40.0
-    branch_percent: float = 20.0
+    reactance_percent: float = 20.0
+    loss_percent: float = 30.0
+    refine: bool = True
     tolerance: float = 1.25
     max_elements: int = 5
     form: str = 'auto'
@@ -98,8 +115,8 @@ class Options:
             raise ValueError('max_elements must be 1..5')
         if self.target_db >= 0:
             raise ValueError('target_db must be negative')
-        if self.branch_percent < 0:
-            raise ValueError('branch_percent must be >= 0')
+        if self.reactance_percent < 0 or self.loss_percent < 0:
+            raise ValueError('reactance_percent and loss_percent must be >= 0')
 
     @property
     def target(self):
@@ -113,20 +130,30 @@ def _db(x):
 class Candidate:
     """A network with element values for one branch. ``error``: RMS |S difference| when
     this candidate replaces the branch in the data; ``error_y``: RMS error of the branch
-    admittance (S). ``relative``: RMS of |Y - Y data| / |Y data| of the branch. ``score``:
-    the larger of the two errors over their limits. ``trivial``: 'open' or 'short' for the
-    candidates without elements."""
+    admittance (S). ``reactance``, ``loss``: relative errors of the port admittances (see
+    the module text). ``score``: the largest error over its limit. ``refined``:
+    element values from the refinement. ``trivial``: 'open' or 'short' for the candidates
+    without elements."""
 
-    def __init__(self, component, error, error_y, trivial=None, relative=None, score=None):
+    def __init__(self, component, error, error_y, trivial=None, score=None, reactance=None,
+                 loss=None, refined=False):
         self.component = component
         self.error = float(error)
         self.error_y = float(error_y)
         self.trivial = trivial
-        self.relative = relative                 # RMS |dY| / |Y data| (None: not judged)
+        self.reactance, self.loss = reactance, loss
+        self.refined = refined
         self.score = float(error if score is None else score)   # <= 1: within the limits
 
-    def relative_text(self):
-        return '-' if self.relative is None else f'{100 * self.relative:.3g} %'
+    @staticmethod
+    def _percent(x):
+        return '-' if x is None else 'inf' if not math.isfinite(x) else f'{100 * x:.3g} %'
+
+    def reactance_text(self):
+        return self._percent(self.reactance)
+
+    def loss_text(self):
+        return self._percent(self.loss)
 
     @property
     def n_elements(self):
@@ -145,7 +172,7 @@ class Candidate:
         if self.is_trivial:
             return self.trivial
         net = self.component.network
-        return f'CR{net.id} {net.name}'
+        return f'CR{net.id} {net.name}' + (' refined' if self.refined else '')
 
     @property
     def error_db(self):
@@ -155,7 +182,8 @@ class Candidate:
         return 'no elements' if self.is_trivial else self.component.format()
 
     def __repr__(self):
-        return f'<{self.label}: {self.error_db:.1f} dB, {self.relative_text()}, {self.values_text()}>'
+        return (f'<{self.label}: {self.error_db:.1f} dB, X {self.reactance_text()}, '
+                f'loss {self.loss_text()}, {self.values_text()}>')
 
 
 def _node_name(node):
@@ -426,7 +454,8 @@ class Model:
                 'id': None if b.chosen.is_trivial else b.chosen.component.network.id,
                 'choice': b.chosen.label,
                 'error_rms': b.chosen.error, 'error_db': b.chosen.error_db,
-                'error_relative': b.chosen.relative, 'score': b.chosen.score,
+                'error_reactance': b.chosen.reactance, 'error_loss': b.chosen.loss,
+                'refined': b.chosen.refined, 'score': b.chosen.score,
                 'score_limit': b.limit, 'warning': b.warning(),
                 'elements': elements(b.elements()),
             } for b in self.free_branches()],
@@ -445,8 +474,12 @@ class Model:
             label = r.chosen.label if isinstance(r, Branch) else r.label
             err = r.chosen.error_db if isinstance(r, Branch) else r.error_db
             text = r.chosen.values_text() if isinstance(r, Branch) else r.values_text()
-            rel = r.chosen.relative_text() if isinstance(r, Branch) else '-'
-            lines.append(f'{r.name:10s} {label:20s} {err:7.1f} dB {rel:>8s}  {text}')
+            if isinstance(r, Branch):
+                x, loss = r.chosen.reactance_text(), r.chosen.loss_text()
+            else:
+                x = loss = '-'
+            lines.append(f'{r.name:10s} {label:28s} {err:7.1f} dB  X {x:>8s}  loss {loss:>8s}  '
+                         f'{text}')
         lines += ['warning: ' + w for w in self.warnings()]
         lines.append(f'model ({self.form} form): {self.n_elements()} elements, S-parameter '
                      f'error {self.error_db():.1f} dB rms, {_db(self.max_error()):.1f} dB max')
@@ -536,58 +569,122 @@ def _acceptable(comp, sol, require):
     return True
 
 
+def netlist_admittance(connections, values, s):
+    """Admittance between node 1 and ground (node 0) of an R, L, C netlist at complex s
+    (numpy, for many frequencies at once; independent of the catalog equations)."""
+    nodes = sorted({n for _, a, b in connections for n in (a, b)} - {0})
+    pos = {n: k for k, n in enumerate(nodes)}
+    s = np.asarray(s, dtype=complex)
+    y = np.zeros((s.size, len(nodes), len(nodes)), dtype=complex)
+    with np.errstate(all='ignore'):
+        for (sym, a, b), v in zip(connections, values):
+            kind = sym[0]
+            g = 1 / v + 0 * s if kind == 'R' else 1 / (s * v) if kind == 'L' else s * v
+            for p, q in ((a, b), (b, a)):
+                if p:
+                    y[:, pos[p], pos[p]] += g
+                    if q:
+                        y[:, pos[p], pos[q]] -= g
+        rhs = np.zeros((s.size, len(nodes)), dtype=complex)
+        rhs[:, pos[1]] = 1
+        try:
+            v1 = np.linalg.solve(y, rhs[..., None])[:, pos[1], 0]
+        except np.linalg.LinAlgError:
+            return np.full(s.size, np.nan, dtype=complex)
+        return 1 / v1
+
+
 class _BranchSearch:
     """Candidates of one branch, synthesized only as far as the choice needs.
 
-    ``s_error(yb)``: RMS |S difference| when admittance yb replaces the branch in the data.
-    ``accept(component)``: extra condition on a candidate (default: none).
+    ``s_diff(yb)``: S-parameter differences (frequency, n, n) when admittance yb replaces
+    the branch in the data. ``data``: the _Data (reference S and Y). ``accept(component)``:
+    extra condition on a candidate.
     """
 
-    def __init__(self, branch, s_error, cat, opt, tick, accept=None):
+    def __init__(self, branch, s_diff, data, cat, opt, tick, accept=None):
         self.b, self.opt, self.tick = branch, opt, tick
-        self.error_of, self.accept = s_error, accept
+        self.diff_of, self.accept = s_diff, accept
+        self.data = data
         self.done = {}                           # network id -> list of Candidate
+        yii = np.diagonal(data.y, axis1=1, axis2=2)          # port admittances of the data
+        self.den_x = np.abs(yii)
+        self.den_r = np.maximum(np.abs(yii.real), np.abs(yii) / LOSS_FLOOR_Q)
         nets = [n for n in cat if n.can_synthesize and not n.fixed
                 and len(n.symVn) <= opt.max_elements]
         self.sigs = {}
         for n in nets:
             self.sigs.setdefault(n.flag_sig, []).append(n)
-        # the rational fit of each signature and its error: a network with synthesis
-        # equations realizes the fitted function, so this is its error before synthesis
+        # the rational fit of each signature and its score: a network with synthesis
+        # equations realizes the fitted function, so this is its score before synthesis
         self.fit, self.sig_error = {}, {}
         for sig, members in self.sigs.items():
             r = crfit(branch.y, branch.freq, members[0].flag_a, members[0].flag_b, opt.dps)
             self.fit[sig] = r
             if r.ok:
-                self.sig_error[sig] = self.score(evaluate(r.a, r.b, branch.freq, opt.dps))[0]
+                self.sig_error[sig] = self.measure(evaluate(r.a, r.b, branch.freq, opt.dps))[0]
             tick()
-        self.trivial = None                      # judged by the S-parameters only
-        if branch.trivial == 'open':
-            e = self.s_error(np.zeros_like(branch.y))
-            self.trivial = Candidate(None, e, _rms(branch.y), 'open', None, e / opt.target)
-        elif branch.trivial == 'short':
-            e = self.s_error(np.full_like(branch.y, np.inf))
-            self.trivial = Candidate(None, e, math.inf, 'short', None, e / opt.target)
+        self.trivial = None
+        if branch.trivial in ('open', 'short'):
+            yb = (np.zeros_like if branch.trivial == 'open' else
+                  lambda v: np.full_like(v, SHORT_SIEMENS))(branch.y)
+            score, e, ex, el = self.measure(yb)
+            self.trivial = Candidate(None, e, _rms(branch.y) if branch.trivial == 'open'
+                                     else math.inf, branch.trivial, score=score,
+                                     reactance=ex, loss=el)
 
-    def score(self, yb):
-        """(score, S error, relative branch error) of admittance yb for this branch."""
-        e = self.s_error(yb)
-        with np.errstate(all='ignore'):
-            rel = float(np.sqrt(np.mean(np.abs(yb - self.b.y) ** 2 / np.abs(self.b.y) ** 2)))
-        if not math.isfinite(rel):
-            rel = math.inf
-        score = e / self.opt.target
-        if self.opt.branch_percent > 0:
-            score = max(score, 100 * rel / self.opt.branch_percent)
-        return score, e, rel
+    # --- measures -----------------------------------------------------------------------
 
-    def s_error(self, yb):
+    def diffs(self, yb):
+        """Per frequency, when yb replaces the branch: the RMS over all S-parameters of the
+        difference to the data (frequency,), and the relative differences of the port
+        admittances Yii (other ports shorted), reactance and loss (frequency, ports):
+        Im dYii / |Yii| and Re dYii / max(|Re Yii|, |Yii| / LOSS_FLOOR_Q)."""
+        n = self.b.freq.size
         with np.errstate(all='ignore'):
             try:
-                e = self.error_of(yb)
+                d = self.diff_of(yb)
+                s = self.data.s_ref + d
+                eye = np.eye(s.shape[-1])
+                y = np.linalg.solve(self.data.z0 * (eye + s), eye - s)
             except np.linalg.LinAlgError:
-                return math.inf
+                inf = np.full(n, np.inf)
+                return inf, np.full(self.den_x.shape, np.inf), np.full(self.den_x.shape, np.inf)
+            sd = np.sqrt(np.mean(np.abs(d) ** 2, axis=(1, 2)))
+            dyii = np.diagonal(y - self.data.y, axis1=1, axis2=2)
+            dx = dyii.imag / self.den_x
+            dr = dyii.real / self.den_r
+        sd = np.where(np.isfinite(sd), sd, np.inf)
+        bad = ~(np.isfinite(dx) & np.isfinite(dr))
+        dx[bad], dr[bad] = np.inf, np.inf
+        return sd, dx, dr
+
+    def s_error(self, yb):
+        e = float(np.sqrt(np.mean(self.diffs(yb)[0] ** 2)))
         return e if math.isfinite(e) else math.inf
+
+    def measure(self, yb):
+        """(score, S error, reactance error, loss error) of admittance yb; the port errors
+        are the RMS over frequency at the port where they are largest."""
+        opt = self.opt
+        sd, dx, dr = self.diffs(yb)
+        e = float(np.sqrt(np.mean(sd ** 2)))
+        e = e if math.isfinite(e) else math.inf
+        ex = float(np.max(np.sqrt(np.mean(dx ** 2, axis=0))))
+        el = float(np.max(np.sqrt(np.mean(dr ** 2, axis=0))))
+        score = e / opt.target
+        if opt.reactance_percent > 0:
+            score = max(score, 100 * ex / opt.reactance_percent)
+        if opt.loss_percent > 0:
+            score = max(score, 100 * el / opt.loss_percent)
+        return score, e, ex, el
+
+    def make(self, comp, error_y, refined=False):
+        score, e, ex, el = self.measure(comp.eval(self.b.freq, 0))
+        return Candidate(comp, e, error_y, None, score=score, reactance=ex, loss=el,
+                         refined=refined)
+
+    # --- candidates ---------------------------------------------------------------------
 
     def candidates(self, net):
         if net.id not in self.done:
@@ -605,10 +702,63 @@ class _BranchSearch:
                         continue
                     c = Component(net, values=comp.values[sol])
                     if self.accept is None or self.accept(c):
-                        score, e, rel = self.score(c.eval(self.b.freq, 0))
-                        out.append(Candidate(c, e, errs[sol], None, rel, score))
+                        out.append(self.make(c, errs[sol]))
             self.done[net.id] = out
         return self.done[net.id]
+
+    def refine(self, cand):
+        """Bounded least-squares refinement of a candidate's element values on all three
+        measures together; signs stay as they are. Returns a new Candidate, or None if it
+        is not better or an element runs to its bound (not determined by the data)."""
+        from scipy.optimize import least_squares
+        opt = self.opt
+        comp = cand.component
+        conns = comp.network.connections
+        vals = np.array(comp.values[0], dtype=float)
+        if not np.all(np.isfinite(vals)) or np.any(vals == 0):
+            return None
+        sign, x0 = np.sign(vals), np.log(np.abs(vals))
+        s = 2j * np.pi * self.b.freq
+        n = self.b.freq.size
+        wx = 100 / opt.reactance_percent if opt.reactance_percent > 0 else 0.0
+        wl = 100 / opt.loss_percent if opt.loss_percent > 0 else 0.0
+
+        def residuals(x):
+            yb = netlist_admittance(conns, sign * np.exp(x), s)
+            sd, dx, dr = self.diffs(yb)
+            r = np.concatenate([sd / opt.target, wx * dx.ravel(), wl * dr.ravel()]) / math.sqrt(n)
+            return np.where(np.isfinite(r), r, 1e6)
+
+        span = math.log(REFINE_SPAN)
+        try:
+            fit = least_squares(residuals, x0, bounds=(x0 - span, x0 + span), method='trf',
+                                max_nfev=100 * len(x0))
+        except (ValueError, np.linalg.LinAlgError):
+            return None
+        if np.any(np.abs(fit.x - x0) > 0.99 * span):
+            return None
+        new = Component(comp.network, values=list(sign * np.exp(fit.x)))
+        if self.accept is not None and not self.accept(new):
+            return None
+        c = self.make(new, cand.error_y, refined=True)
+        return c if c.score < cand.score * (1 - 1e-6) else None
+
+    # --- the choice ---------------------------------------------------------------------
+
+    def _pick(self, pool):
+        """Choose from the pool by the rules of Options.pick; returns (chosen, limit)."""
+        opt = self.opt
+        best = min(pool, key=lambda c: c.score)
+        if opt.pick == 'simplest':
+            limit = max(1.0, opt.tolerance * best.score)
+        else:
+            # best score; among practically equal ones the fewest elements, so that exact
+            # data do not give a larger network with meaningless extra elements
+            limit = 1.01 * best.score + EQUAL_SCORE
+        ok = [c for c in pool if c.score <= limit]
+        count = min(c.n_elements for c in ok)
+        chosen = min((c for c in ok if c.n_elements == count), key=lambda c: c.score)
+        return chosen, limit
 
     def run(self):
         """Choose; returns the chosen Candidate (None if there is no candidate at all)."""
@@ -629,34 +779,48 @@ class _BranchSearch:
                 best = min(found + ([best] if best is not None else []), key=lambda c: c.score)
         if best is None:
             return None
-        if opt.pick == 'simplest':
-            limit = max(1.0, opt.tolerance * best.score)
-        else:
-            # best score; among practically equal ones the fewest elements, so that exact
-            # data do not give a larger network with meaningless extra elements
-            limit = 1.01 * best.score + EQUAL_ERROR / opt.target
-        chosen = best
-        if self.trivial is not None and self.trivial.score <= limit:
-            chosen = self.trivial
-        else:
-            # networks that can reach the limit, fewest elements first
-            nets = [n for sig in order if self.sig_error[sig] <= limit
-                    for n in self.sigs[sig]]
-            for count in range(1, best.n_elements + 1):
-                found = [c for n in nets if len(n.symVn) == count
-                         for c in self.candidates(n) if c.score <= limit]
-                if found:
-                    chosen = min(found, key=lambda c: c.score)
-                    break
-        allc = [c for cs in self.done.values() for c in cs]
+        pool = [c for cs in self.done.values() for c in cs]
         if self.trivial is not None:
-            allc.append(self.trivial)
-        allc.sort(key=lambda c: (c.score > limit, c.n_elements if c.score <= limit else 0,
+            pool.append(self.trivial)
+        chosen, limit = self._pick(pool)
+        if not chosen.is_trivial:
+            # networks with fewer elements that can reach the limit
+            nets = [n for sig in order if self.sig_error[sig] <= limit for n in self.sigs[sig]
+                    if len(n.symVn) < chosen.n_elements]
+            for n in nets:
+                self.candidates(n)
+            pool = [c for cs in self.done.values() for c in cs] + \
+                ([self.trivial] if self.trivial is not None else [])
+            chosen, limit = self._pick(pool)
+        if opt.refine and not (self.trivial is not None and chosen is self.trivial):
+            pool += self._refined_pool()
+            chosen, limit = self._pick(pool)
+        pool.sort(key=lambda c: (c.score > limit, c.n_elements if c.score <= limit else 0,
                                  c.score))
-        self.b.candidates = [chosen] + [c for c in allc if c is not chosen]
+        self.b.candidates = [chosen] + [c for c in pool if c is not chosen]
         self.b.chosen = chosen
         self.b.limit = limit
         return chosen
+
+    def _refined_pool(self):
+        """Refine the best few networks of each element count (synthesizing them first,
+        by the score of their signature); returns the refined candidates."""
+        per_count = {}
+        for sig in sorted(self.sig_error, key=self.sig_error.get):
+            for net in self.sigs[sig]:
+                per_count.setdefault(len(net.symVn), []).append(net)
+        out = []
+        for count, nets in sorted(per_count.items()):
+            found = []
+            for net in nets[:REFINE_TRY]:
+                found += self.candidates(net)
+            found.sort(key=lambda c: c.score)
+            for c in found[:REFINE_BEST]:
+                self.tick()
+                r = self.refine(c)
+                if r is not None:
+                    out.append(r)
+        return out
 
 
 # --- the forms --------------------------------------------------------------------------
@@ -670,8 +834,11 @@ class _Data:
         self.cat, self.opt, self.tick = cat, opt, tick
         self.nports = y_sym.shape[-1]
 
+    def y_diff(self, y):
+        return _y2s(y, self.z0) - self.s_ref
+
     def y_error(self, y):
-        return _rms(_y2s(y, self.z0) - self.s_ref)
+        return _rms(self.y_diff(y))
 
 
 def _extract_pi(d):
@@ -685,8 +852,8 @@ def _extract_pi(d):
         def s_error(ycand, b=b):
             y = d.y.copy()
             _stamp(y, b.ports, ycand - b.y)
-            return d.y_error(y)
-        _BranchSearch(b, s_error, d.cat, d.opt, lambda b=b: d.tick(f'branch {b.name}')).run()
+            return d.y_diff(y)
+        _BranchSearch(b, s_error, d, d.cat, d.opt, lambda b=b: d.tick(f'branch {b.name}')).run()
     return Model(d.nports, d.z0, branches, d.f, d.s_data, d.opt, 'pi')
 
 
@@ -709,8 +876,8 @@ def _extract_tee(d):
         def s_error(ycand, k=k):
             v = list(legs)
             v[k] = ycand
-            return _rms(_tee_s(1 / v[0], 1 / v[1], v[2], d.z0) - d.s_ref)
-        _BranchSearch(b, s_error, d.cat, d.opt,
+            return _tee_s(1 / v[0], 1 / v[1], v[2], d.z0) - d.s_ref
+        _BranchSearch(b, s_error, d, d.cat, d.opt,
                       lambda b=b: d.tick(f'tee form, branch {b.name}')).run()
     return Model(2, d.z0, branches, d.f, d.s_data, d.opt, 'tee')
 
@@ -737,15 +904,15 @@ def _try_coupling(d, model, ports):
     w = 2 * np.pi * d.f
     low = d.f <= d.f[0] + (d.f[-1] - d.f[0]) / 3     # where the coils are inductive
 
-    def error(z1, z2, rc, mutual, y_rest):
-        """RMS |S difference| when the three data branches are replaced by the pair
-        (coil impedances z1, z2) and the branch y_rest between i and j."""
+    def diff(z1, z2, rc, mutual, y_rest):
+        """S difference when the three data branches are replaced by the pair (coil
+        impedances z1, z2) and the branch y_rest between i and j."""
         y = d.y.copy()
         for t in tri:
             _stamp(y, t.ports, -t.y)
         _stamp_pair(y, ports, z1 + rc, z2 + rc, rc + 1j * w * mutual)
         _stamp(y, tri[0].ports, y_rest)
-        return d.y_error(y)
+        return d.y_diff(y)
 
     def fit(use_rc):
         y_rest = np.zeros_like(yij)
@@ -768,7 +935,7 @@ def _try_coupling(d, model, ports):
             r_grid = r0 * np.linspace(0.0, 3.0, 13) if use_rc else np.zeros(1)
             for _ in range(8):                   # coarse grid, then finer ones around it
                 _, mutual, rc = min(
-                    ((error(z11 - r, z22 - r, r, m, y_rest), m, r)
+                    ((_rms(diff(z11 - r, z22 - r, r, m, y_rest)), m, r)
                      for m in m_grid for r in r_grid), key=lambda t: t[0])
                 dm = abs(m_grid[1] - m_grid[0])
                 dr = max(r_grid[1:] - r_grid[:-1]) if use_rc else 0
@@ -782,8 +949,8 @@ def _try_coupling(d, model, ports):
                 def s_error(ycand, n=n):
                     z = list(z_model)
                     z[n] = 1 / ycand
-                    return error(z[0], z[1], rc, mutual, y_rest)
-                c = _BranchSearch(coil, s_error, d.cat, opt,
+                    return diff(z[0], z[1], rc, mutual, y_rest)
+                c = _BranchSearch(coil, s_error, d, d.cat, opt,
                                   lambda: d.tick(f'coupled coils {tag}'),
                                   accept=lambda comp: series_inductor(comp) is not None).run()
                 if c is None:
@@ -799,8 +966,8 @@ def _try_coupling(d, model, ports):
             rest = Branch(tri[0].node1, tri[0].node2, tri[0].tag, d.f, yij - y_pair, 'open',
                           tri[0].ports)
             chosen = _BranchSearch(
-                rest, lambda ycand: error(z_model[0], z_model[1], rc, mutual, ycand),
-                d.cat, opt, lambda: d.tick(f'branch {rest.name} beside coupled coils')).run()
+                rest, lambda ycand: diff(z_model[0], z_model[1], rc, mutual, ycand),
+                d, d.cat, opt, lambda: d.tick(f'branch {rest.name} beside coupled coils')).run()
             g.error = chosen.error
             if result is None or g.error < result[2]:
                 result = (g, rest, g.error)
@@ -920,8 +1087,9 @@ def describe(model):
     lines = [f'data: {model.source or "network"}, {model.nports} port(s), '
              f'fit band {model.freq[0] / 1e9:.6g} to {model.freq[-1] / 1e9:.6g} GHz, '
              f'{model.freq.size} points',
-             f'choice: {o.pick}, elements {o.require}, limits {o.target_db:g} dB (S-parameters) '
-             f'and {o.branch_percent:g} % (branch), else {o.tolerance:g} x the best, '
+             f'choice: {o.pick}, elements {o.require}, limits {o.target_db:g} dB (S-parameters), '
+             f'{o.reactance_percent:g} % (reactance), {o.loss_percent:g} % (loss), '
+             f'else {o.tolerance:g} x the best, refine {"on" if o.refine else "off"}, '
              f'up to {o.max_elements} elements per branch, '
              f'form {o.form}, coupled coils {"on" if o.coupling else "off"}']
     if model.reciprocity_error > 1e-6:

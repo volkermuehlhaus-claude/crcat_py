@@ -62,9 +62,14 @@ def main(argv=None):
     ap.add_argument('--target-db', type=float, default=d.target_db,
                     help='S-parameter error limit per branch, RMS S-parameter difference in dB '
                          f'(default {d.target_db:g})')
-    ap.add_argument('--branch-percent', type=float, default=d.branch_percent,
-                    help='error limit of the branch itself, RMS |Y - Y data| / |Y data| in '
-                         f'percent; 0 = S-parameters only (default {d.branch_percent:g})')
+    ap.add_argument('--reactance-percent', type=float, default=d.reactance_percent,
+                    help='reactance error limit of a branch: RMS of Im dYii / |Yii| of the '
+                         f'port admittances, percent; 0 = off (default {d.reactance_percent:g})')
+    ap.add_argument('--loss-percent', type=float, default=d.loss_percent,
+                    help='loss error limit of a branch: RMS of Re dYii / Re Yii of the port '
+                         f'admittances, percent; 0 = off (default {d.loss_percent:g})')
+    ap.add_argument('--no-refine', action='store_true',
+                    help='keep the element values of the closed-form synthesis')
     ap.add_argument('--tolerance', type=float, default=d.tolerance,
                     help='if the limits cannot be reached: accept up to this factor times '
                          f'the best candidate (default {d.tolerance:g})')
@@ -100,7 +105,8 @@ def main(argv=None):
             fmin=None if args.fmin is None else args.fmin * 1e9,
             fmax=None if args.fmax is None else args.fmax * 1e9,
             require=args.require, pick=args.pick, target_db=args.target_db,
-            branch_percent=args.branch_percent,
+            reactance_percent=args.reactance_percent, loss_percent=args.loss_percent,
+            refine=not args.no_refine,
             tolerance=args.tolerance, max_elements=args.max_elements,
             form=args.form, coupling=not args.no_coupling, full_search=args.full_search)
         m = model.extract(network, opt)
