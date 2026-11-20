@@ -45,7 +45,7 @@ from .component import Component, format_value
 from .fit import DEFAULT_DPS, crfit, evaluate
 from .seed import Cancelled
 
-__all__ = ['Options', 'Model', 'Branch', 'Candidate', 'Coupled', 'extract',
+__all__ = ['Options', 'Model', 'Branch', 'Candidate', 'Coupled', 'extract', 'shift_ports',
            'branch_admittances', 'Cancelled']
 
 REQUIRE = ('positive', 'positive-r', 'passive', 'any')
@@ -60,6 +60,7 @@ REFINE_SPAN = 1e3        # refinement keeps each element within this factor of i
 REFINE_TRY = 6           # networks synthesized per element count for the refinement
 REFINE_BEST = 3          # of those, the best ones are refined
 K_MAX = 0.999            # largest coupling factor accepted
+K_MIN = 0.05             # smaller coupling factors are not worth a coupled-coil model
 
 
 @dataclasses.dataclass
@@ -83,6 +84,10 @@ class Options:
         a pi branch misses the error limit; the form with the lower error is kept.
     coupling: replace a branch that misses the limit (or has a negative element) and its
         two neighbours by coupled coils, if that lowers the error (pi form).
+    delay: a piece of line (reference impedance, this delay) at each port, removed from
+        the data before the fit and put back in the netlist as a line element: 'off' or
+        the delay in seconds. For data with a known feed line; a line that is short
+        against the wavelength needs none of this, the lumped elements cover it.
     full_search: synthesize every network instead of only those that can be chosen
         (slower, same result; fills the list of alternatives completely).
     dps: working precision of the fits, decimal digits.
@@ -99,6 +104,7 @@ class Options:
     max_elements: int = 5
     form: str = 'auto'
     coupling: bool = True
+    delay: object = 'off'
     full_search: bool = False
     dps: int = DEFAULT_DPS
 
@@ -115,6 +121,10 @@ class Options:
             raise ValueError('max_elements must be 1..5')
         if self.target_db >= 0:
             raise ValueError('target_db must be negative')
+        if not (self.delay == 'off' or (isinstance(self.delay, (int, float))
+                                        and not isinstance(self.delay, bool)
+                                        and self.delay >= 0)):
+            raise ValueError("delay must be 'off' or a delay in seconds (>= 0)")
         if self.reactance_percent < 0 or self.loss_percent < 0:
             raise ValueError('reactance_percent and loss_percent must be >= 0')
 
@@ -352,6 +362,7 @@ class Model:
         self.branches = branches
         self.couplings = []
         self.form = form
+        self.delay = 0.0                         # line at each port, seconds
         self.freq, self.s_data = freq, s_data    # fit band
         self.options = options
         self.source = source
@@ -386,8 +397,10 @@ class Model:
         if self.form == 'tee':
             a, b, c = (br.admittance(freq) for br in self.branches)
             with np.errstate(all='ignore'):
-                return _tee_s(1 / a, 1 / b, c, self.z0)
-        return _y2s(self.y_matrix(freq), self.z0)
+                s = _tee_s(1 / a, 1 / b, c, self.z0)
+        else:
+            s = _y2s(self.y_matrix(freq), self.z0)
+        return shift_ports(s, freq, self.delay) if self.delay else s
 
     def to_network(self, freq=None):
         """The model's response as a scikit-rf Network (default: the fit band)."""
@@ -425,6 +438,13 @@ class Model:
             out.append(('short between the ports', shorted))
         for c in self.couplings:
             out.append((f'{c.name}: {c.label}, error {c.error_db:.1f} dB', c.elements()))
+        if self.delay:                           # the lumped part sits behind the lines
+            core = {f'p{i + 1}': f'p{i + 1}_c' for i in range(self.nports)}
+            out = [(text, [e if e[1] == 'K' else
+                           (e[0], e[1], core.get(e[2], e[2]), core.get(e[3], e[3]), e[4])
+                           for e in part]) for text, part in out]
+            out.append((f'line of {self.delay * 1e12:.4g} ps ({self.z0:g} ohm) at each port',
+                        [(f'T_{p}', 'T', p, c, self.delay) for p, c in core.items()]))
         return out
 
     def elements(self):
@@ -443,6 +463,7 @@ class Model:
                     for n, k, n1, n2, v in part]
         return {
             'source': self.source, 'ports': self.nports, 'z0': self.z0, 'form': self.form,
+            'delay_s': self.delay,
             'band_hz': [float(self.freq[0]), float(self.freq[-1])],
             'points': int(self.freq.size),
             'options': dataclasses.asdict(self.options),
@@ -481,6 +502,8 @@ class Model:
             lines.append(f'{r.name:10s} {label:28s} {err:7.1f} dB  X {x:>8s}  loss {loss:>8s}  '
                          f'{text}')
         lines += ['warning: ' + w for w in self.warnings()]
+        if self.delay:
+            lines.append(f'line at each port: {self.delay * 1e12:.4g} ps, {self.z0:g} ohm')
         lines.append(f'model ({self.form} form): {self.n_elements()} elements, S-parameter '
                      f'error {self.error_db():.1f} dB rms, {_db(self.max_error()):.1f} dB max')
         return '\n'.join(lines)
@@ -496,6 +519,13 @@ def _y2s(y, z0):
     n = y.shape[-1]
     eye = np.eye(n)
     return np.einsum('fij,fjk->fik', eye - z0 * y, np.linalg.inv(eye + z0 * y))
+
+
+def shift_ports(s, freq, delay):
+    """S-parameters with a matched line of ``delay`` seconds added at every port
+    (negative delay: removed)."""
+    d = np.exp(-2j * np.pi * np.asarray(freq, dtype=float) * delay)
+    return s * (d * d)[:, None, None]
 
 
 def _tee_s(za, zb, yc, z0):
@@ -717,6 +747,8 @@ class _BranchSearch:
         vals = np.array(comp.values[0], dtype=float)
         if not np.all(np.isfinite(vals)) or np.any(vals == 0):
             return None
+        if cand.score <= EQUAL_SCORE:            # as good as exact: nothing to refine
+            return None
         sign, x0 = np.sign(vals), np.log(np.abs(vals))
         s = 2j * np.pi * self.b.freq
         n = self.b.freq.size
@@ -741,7 +773,7 @@ class _BranchSearch:
         if self.accept is not None and not self.accept(new):
             return None
         c = self.make(new, cand.error_y, refined=True)
-        return c if c.score < cand.score * (1 - 1e-6) else None
+        return c if c.score < 0.99 * cand.score else None
 
     # --- the choice ---------------------------------------------------------------------
 
@@ -833,6 +865,7 @@ class _Data:
         self.s_ref = _y2s(y_sym, z0)
         self.cat, self.opt, self.tick = cat, opt, tick
         self.nports = y_sym.shape[-1]
+        self.at = lambda fraction: None          # progress: where the work stands (0..1)
 
     def y_diff(self, y):
         return _y2s(y, self.z0) - self.s_ref
@@ -848,7 +881,9 @@ def _extract_pi(d):
         node2 = f'p{ports[1]}' if len(ports) == 2 else '0'
         branches.append(Branch(f'p{ports[0]}', node2, 'p' + 'p'.join(str(p) for p in ports),
                                d.f, yb[ports], 'open', ports))
-    for b in branches:
+    for n, b in enumerate(branches):
+        d.at(0.6 * n / len(branches))
+
         def s_error(ycand, b=b):
             y = d.y.copy()
             _stamp(y, b.ports, ycand - b.y)
@@ -873,6 +908,8 @@ def _extract_tee(d):
                 Branch('p2', 'c', 'p2c', d.f, legs[1], 'short'),
                 Branch('c', '0', 'c', d.f, legs[2], 'open')]
     for k, b in enumerate(branches):
+        d.at(0.9 + 0.03 * k)
+
         def s_error(ycand, k=k):
             v = list(legs)
             v[k] = ycand
@@ -888,7 +925,7 @@ def _has_inductor(branch):
             and any(sym[0] == 'L' for sym in c.component.network.symVn))
 
 
-def _try_coupling(d, model, ports):
+def _try_coupling(d, model, ports, before=math.inf):
     """Coupled coils for the triangle ports = (i, j, k).
 
     The branches i-k and j-k become the coils. What the coils and their coupling do not
@@ -913,6 +950,19 @@ def _try_coupling(d, model, ports):
         _stamp_pair(y, ports, z1 + rc, z2 + rc, rc + 1j * w * mutual)
         _stamp(y, tri[0].ports, y_rest)
         return d.y_diff(y)
+
+    # A cheap test first: the coils of the data with one coupling factor. Without real
+    # coupling, or if even this does not beat the three branches as they are, no search.
+    with np.errstate(all='ignore'):
+        det = (yik + yij) * (yjk + yij) - yij * yij
+        q11, q22, q12 = (yjk + yij) / det, (yik + yij) / det, yij / det
+        l1, l2, m0 = (float(np.mean(v.imag[low] / w[low])) for v in (q11, q22, q12))
+    if not (all(np.all(np.isfinite(v)) for v in (q11, q22, q12)) and l1 > 0 and l2 > 0):
+        return None
+    if not K_MIN <= abs(m0) / math.sqrt(l1 * l2) <= 1:
+        return None
+    if _rms(diff(q11, q22, 0.0, m0, np.zeros_like(yij))) >= before:
+        return None
 
     def fit(use_rc):
         y_rest = np.zeros_like(yij)
@@ -984,7 +1034,9 @@ def _try_coupling(d, model, ports):
 
 def _add_couplings(d, model):
     """Replace triangles around a failing branch between two ports by coupled coils."""
-    for b in list(model.branches):
+    todo = list(model.branches)
+    for n, b in enumerate(todo):
+        d.at(0.6 + 0.3 * n / len(todo))
         if b not in model.branches or len(b.ports) != 2 or b.group is not None:
             continue
         if not (b.target_missed or b.has_negative_element()):
@@ -1000,7 +1052,7 @@ def _add_couplings(d, model):
             for t in tri:
                 _stamp(y, t.ports, t.admittance(d.f) - t.y)
             before = d.y_error(y)
-            r = _try_coupling(d, model, (i, j, k))
+            r = _try_coupling(d, model, (i, j, k), before)
             if r is not None and r[2] < before and (best is None or r[2] < best[2]):
                 best = r
         if best is not None:
@@ -1044,41 +1096,59 @@ def extract(network, options=None, catalog=None, progress=None, cancel=None):
     if not np.allclose(network.z0, z0):
         network = network.copy()
         network.renormalize(z0)
-    y = network.y[keep]
-    y_sym = (y + np.transpose(y, (0, 2, 1))) / 2
     s_data = network.s[keep]
-
     n = network.nports
-    nsig = len({m.flag_sig for m in cat if m.can_synthesize})
-    total = 2 * (n * (n + 1) // 2) * (nsig + 60)     # rough number of steps, for the bar
-    count = [0]
+    eye = np.eye(n)
+    done = [0.0]                                 # progress: fraction of the work done
 
     def tick(text=''):
         if cancel is not None and cancel():
             raise Cancelled()
-        count[0] += 1
         if progress is not None:
-            progress(min(count[0] / total, 0.99), text)
+            progress(done[0], text)
 
-    d = _Data(f, y_sym, s_data, z0, cat, opt, tick)
-    model = None
-    if opt.form in ('auto', 'pi'):
-        model = _extract_pi(d)
-        if opt.coupling:
-            _add_couplings(d, model)
-    if opt.form == 'tee' or (opt.form == 'auto' and n == 2 and _missed(model)):
-        tee = _extract_tee(d)
-        if model is None:
-            if tee is None:
-                raise ValueError('the data have no Z-matrix: the tee form cannot be used')
-            model = tee
-        elif tee is not None and tee.error() < model.error():
-            model = tee
-    model.source = source
-    model.reciprocity_error = _rms(d.s_ref - s_data)
+    def at(fraction):
+        done[0] = max(done[0], min(fraction, 0.99))
+        if progress is not None:
+            progress(done[0], 'coupled coils' if fraction >= 0.6 else '')
+
+    def run(delay):
+        s_core = shift_ports(s_data, f, -delay) if delay else s_data
+        try:
+            y = np.linalg.solve(z0 * (eye + s_core), eye - s_core)
+        except np.linalg.LinAlgError:            # ports shorted together: no Y-matrix;
+            sc = s_core * (1 - 1e-12)            # a hair of loss gives a very large one
+            y = np.linalg.solve(z0 * (eye + sc), eye - sc)
+        y_sym = (y + np.transpose(y, (0, 2, 1))) / 2
+        d = _Data(f, y_sym, s_core, z0, cat, opt, tick)
+        d.at = at
+        model = None
+        if opt.form in ('auto', 'pi'):
+            model = _extract_pi(d)
+            if opt.coupling:
+                _add_couplings(d, model)
+        if opt.form == 'tee' or (opt.form == 'auto' and n == 2 and _missed(model)):
+            tee = _extract_tee(d)
+            if model is None:
+                if tee is None:
+                    raise ValueError('the data have no Z-matrix: the tee form cannot be used')
+                model = tee
+            elif tee is not None and tee.error() < model.error():
+                model = tee
+        model.source = source
+        model.delay = delay
+        model.s_data = s_data                    # the data as given, with the lines
+        model.reciprocity_error = _rms(d.s_ref - s_core)
+        return model
+
+    model = run(0.0 if opt.delay == 'off' else float(opt.delay))
     if progress is not None:
         progress(1.0, 'done')
     return model
+
+
+def _delay_text(delay):
+    return delay if isinstance(delay, str) else f'{delay * 1e12:g} ps'
 
 
 def describe(model):
@@ -1090,7 +1160,7 @@ def describe(model):
              f'choice: {o.pick}, elements {o.require}, limits {o.target_db:g} dB (S-parameters), '
              f'{o.reactance_percent:g} % (reactance), {o.loss_percent:g} % (loss), '
              f'else {o.tolerance:g} x the best, refine {"on" if o.refine else "off"}, '
-             f'up to {o.max_elements} elements per branch, '
+             f'up to {o.max_elements} elements per branch, delay {_delay_text(o.delay)}, '
              f'form {o.form}, coupled coils {"on" if o.coupling else "off"}']
     if model.reciprocity_error > 1e-6:
         lines.append(f'data are not reciprocal: RMS |S - S^T|/2 = '

@@ -92,6 +92,13 @@ class MainWindow(QMainWindow):
         self.coupling.setChecked(defaults.coupling)
         self.coupling.setToolTip('Replace branches that need a negative inductance by two '
                                  'coils with a coupling factor')
+        self.delay = QDoubleSpinBox(decimals=2, minimum=0, maximum=1000, singleStep=0.1,
+                                    suffix=' ps')
+        self.delay.setSpecialValueText('none')
+        self.delay.setToolTip(
+            'A piece of line (reference impedance, this delay) at each port, removed from the '
+            'data before the fit and put back in the netlist as a line element. For data '
+            'with a known feed line.')
         self.format = QComboBox()
         for key in netlist.FORMATS:
             self.format.addItem(key, key)
@@ -108,6 +115,7 @@ class MainWindow(QMainWindow):
         form4.addRow('Error limit, reactance', self.reactance_percent)
         form4.addRow('Error limit, loss', self.loss_percent)
         form4.addRow('Form', self.form)
+        form4.addRow('Line at each port', self.delay)
         form4.addRow('', self.coupling)
         form4.addRow('', self.refine)
         row_opt = QHBoxLayout()
@@ -271,7 +279,8 @@ class MainWindow(QMainWindow):
             target_db=self.target.value(), reactance_percent=self.reactance_percent.value(),
             loss_percent=self.loss_percent.value(), refine=self.refine.isChecked(),
             max_elements=self.max_elements.value(),
-            form=self.form.currentData(), coupling=self.coupling.isChecked())
+            form=self.form.currentData(), coupling=self.coupling.isChecked(),
+            delay=self.delay.value() * 1e-12 or 'off')
 
     def run(self):
         if self.worker is not None:
@@ -362,6 +371,8 @@ class MainWindow(QMainWindow):
         warnings = m.warnings()
         text = (f'Model ({m.form} form): {m.n_elements()} elements, S-parameter error {m.error_db():.1f} dB rms '
                 f'in the fit band {m.freq[0] / 1e9:.6g} to {m.freq[-1] / 1e9:.6g} GHz.')
+        if m.delay:
+            text += f' Line at each port: {m.delay * 1e12:.4g} ps.'
         if warnings:
             text += '\nWarning: ' + '\nWarning: '.join(warnings)
         self.status.setText(text)

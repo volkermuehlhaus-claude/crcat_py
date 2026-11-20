@@ -157,7 +157,9 @@ often a negative resistance, in the branch between them. When such a branch miss
 (or got a negative element), the tool tries to replace it and its two neighbours by two
 coils with a coupling factor (SPICE `K`, Spectre `mutual_inductor`), plus a common resistor
 if that helps. What the coils do not explain of the branch between the two ports stays a
-branch of its own. The replacement is kept if it lowers the error.
+branch of its own. The replacement is kept if it lowers the error. A quick test comes
+first: the coils of the data with one coupling factor must show a coupling of at least
+0.05 and beat the three branches as they are; otherwise no search is made.
 
 Example: a center-tapped inductor (3-port, center tap at port 3), fitted to 30 GHz. As a pi
 of positive elements over its full band the error was -12.5 dB. With coupled coils:
@@ -207,11 +209,18 @@ Main options (`crcat-netlist --help` lists all):
 | `--max-elements` | most elements per branch (1..5) |
 | `--form auto`, `pi`, `tee` | auto (default): pi, and the tee form for a 2-port if a pi branch misses the limit |
 | `--no-coupling` | never use coupled coils |
+| `--delay` (ps) | a line of the reference impedance and this delay at each port: removed from the data before the fit, written as a `T` element (Spectre `tline`) |
 
 Limits:
 
 - **Five elements per branch.** A branch with several resonances in the band needs a
   narrower band.
+- **Distributed parts.** A structure that is not small against the wavelength, or a net of
+  strongly coupled conductors, is not a pi of small branches: for a 6-port feed structure
+  12 of 21 branches of the data had a negative real part even below 40 GHz. `--delay`
+  takes a known feed line out; there is no automatic search for it (a search by how
+  physical the branches become was not reliable, since a short line is the same as a
+  series L and a shunt C, which the lumped elements cover).
 - **Tee form for 2-ports only.** A tee has too few branches for a general n-port.
 - **One coupling factor per coil pair,** see above; and coupled loss that needs a negative
   resistance stays out unless `--require any`.

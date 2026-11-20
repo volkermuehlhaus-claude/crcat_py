@@ -306,7 +306,7 @@ def test_tee_with_shorted_legs():
                       model.Options(form='tee', pick='best', reactance_percent=0,
                                     loss_percent=0))
     assert [b.chosen.label for b in m.branches[:2]] == ['short', 'short']
-    assert m.error_db() < -150
+    assert m.error_db() < -100           # shorted ports have no Y-matrix: a hair of loss added
     text = netlist.to_spice(m, 'dut')
     assert 'Rshort_p2c p2 p1 1e-06' in text
     assert not any(' c ' in ln + ' ' for ln in text.splitlines() if ln[0] in 'RLC')
@@ -367,7 +367,10 @@ def spice_s_parameters(text, f, z0=50.0):
     coupled = {name for _, a, b, _ in couplings for name in (a, b)}
     head = next(ln.split() for ln in text.splitlines() if ln.upper().startswith('.SUBCKT'))
     ports = head[2:]
-    nodes = ports + sorted({n for _, a, b, _ in lines for n in (a, b)} - set(ports) - {'0'})
+    tlines = [ln for ln in lines if ln[0][0] == 'T']         # T a 0 b 0 Z0=.. TD=..
+    lines = [ln for ln in lines if ln[0][0] != 'T']
+    nodes = ports + sorted(({n for _, a, b, _ in lines for n in (a, b)}
+                            | {n for ln in tlines for n in (ln[1], ln[3])}) - set(ports) - {'0'})
     idx = {n: k for k, n in enumerate(nodes)}
     s = 2j * np.pi * f
     y = np.zeros((f.size, len(nodes), len(nodes)), dtype=complex)
@@ -377,6 +380,13 @@ def spice_s_parameters(text, f, z0=50.0):
                 if p != '0' and q != '0':
                     y[:, idx[p], idx[q]] += sp * sq * g
 
+    for _, a, _, b, _, zl, td in tlines:
+        theta = 2 * np.pi * f * float(td.split('=')[1])
+        yl = 1 / float(zl.split('=')[1])
+        stamp(a, '0', a, '0', -1j * yl / np.tan(theta))
+        stamp(b, '0', b, '0', -1j * yl / np.tan(theta))
+        stamp(a, '0', b, '0', 1j * yl / np.sin(theta))
+        stamp(b, '0', a, '0', 1j * yl / np.sin(theta))
     by_name = {ln[0]: ln for ln in lines}
     for _, la, lb, k in couplings:
         (_, a1, b1, v1), (_, a2, b2, v2) = by_name[la], by_name[lb]
@@ -430,6 +440,25 @@ def test_negative_values_are_flagged():
     net = make_network(1, {(1,): ('L', [-0.3e-9])})
     m = model.extract(net, model.Options(require='positive-r'))
     assert 'WARNING: negative element values: L_p1' in netlist.to_spice(m)
+
+
+# --- lines at the ports -----------------------------------------------------------------
+
+def test_line_at_each_port():
+    f = np.linspace(0.5e9, 100e9, 120)
+    core = make_network(2, TWO_PORT, f=f)
+    net = skrf.Network(frequency=core.frequency, s=model.shift_ports(core.s, f, 1.5e-12), z0=50)
+    assert model.extract(net, model.Options(coupling=False)).warnings()   # no pi of few elements
+    m = model.extract(net, model.Options(delay=1.5e-12, pick='best'))
+    assert m.delay == 1.5e-12 and m.error_db() < -150 and not m.warnings()
+    assert [b.chosen.label for b in m.branches] == ['CR3 C', 'CR8 SerRC', 'CR7 SerRL']
+    assert 'line at each port: 1.5 ps' in m.summary() and m.to_dict()['delay_s'] == 1.5e-12
+    text = netlist.to_spice(m, 'dut')
+    assert 'T_p1 p1 0 p1_c 0 Z0=50 TD=1.5e-12' in text and 'C_p1 p1_c 0 2e-14' in text
+    assert np.allclose(spice_s_parameters(text, f), m.s_matrix(f), atol=1e-9)
+    assert 'T_p2 (p2 0 p2_c 0) tline z0=50 td=1.5e-12' in netlist.to_spectre(m, 'dut')
+    with pytest.raises(ValueError):
+        model.extract(net, model.Options(delay='auto'))
 
 
 # --- command line -----------------------------------------------------------------------

@@ -78,6 +78,10 @@ def main(argv=None):
     ap.add_argument('--form', choices=model.FORM, default=d.form,
                     help='pi; tee (2-ports); auto (default): pi, and for a 2-port the tee '
                          'form too if a pi branch misses the limit')
+    ap.add_argument('--delay', default='off',
+                    help="line at each port (reference impedance), removed before the fit "
+                         "and put back in the netlist as a line element: off (default) or the "
+                         "delay in ps")
     ap.add_argument('--no-coupling', action='store_true',
                     help='do not replace branches by coupled coils (K element)')
     ap.add_argument('--format', choices=netlist.FORMATS + ('both',), default='spice',
@@ -108,7 +112,8 @@ def main(argv=None):
             reactance_percent=args.reactance_percent, loss_percent=args.loss_percent,
             refine=not args.no_refine,
             tolerance=args.tolerance, max_elements=args.max_elements,
-            form=args.form, coupling=not args.no_coupling, full_search=args.full_search)
+            form=args.form, coupling=not args.no_coupling, full_search=args.full_search,
+            delay='off' if args.delay == 'off' else float(args.delay) * 1e-12)
         m = model.extract(network, opt)
     except ValueError as ex:
         sys.exit(f'error: {ex}')

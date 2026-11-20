@@ -1,6 +1,7 @@
 """Netlist text for a :class:`crcat.model.Model`: SPICE and Spectre subcircuits.
 
-Coupled coils are written as a K element (SPICE) or mutual_inductor (Spectre).
+Coupled coils are written as a K element (SPICE) or mutual_inductor (Spectre), the lines
+at the ports (Options.delay) as T elements (SPICE) or tline (Spectre).
 
 Ports are p1..pN, ground is node 0 (the global ground of both simulators). Values are in
 ohm, H and F.
@@ -30,7 +31,7 @@ def _header(model, comment):
                  f'{model.form} form, elements {o.require}, choice {o.pick}')
     lines.append(f'S-parameter error of the model: {model.error_db():.1f} dB rms, '
                  f'reference {model.z0:g} ohm')
-    negative = [n for n, kind, *_, v in model.elements() if kind != 'K' and v <= 0]
+    negative = [n for n, kind, *_, v in model.elements() if kind in 'RLC' and v <= 0]
     if negative:
         lines.append('WARNING: negative element values: ' + ' '.join(negative))
     lines += ['WARNING: ' + w for w in model.warnings()]
@@ -48,6 +49,9 @@ def to_spice(model, name='crcat_model'):
     for comment, part in model.sections():
         lines.append('* ' + comment)
         for ename, kind, n1, n2, value in part:      # for K: the two inductor names
+            if kind == 'T':                          # line between a port and the lumped part
+                lines.append(f'{ename} {n1} 0 {n2} 0 Z0={model.z0:g} TD={value:.6g}')
+                continue
             lines.append(f'{ename} {n1} {n2} {value:.6g}')
     lines.append(f'.ENDS {name}')
     return '\n'.join(lines) + '\n'
@@ -63,6 +67,9 @@ def to_spectre(model, name='crcat_model'):
             if kind == 'K':
                 lines.append(f'    {ename} mutual_inductor coupling={value:.6g} '
                              f'ind1={n1} ind2={n2}')
+                continue
+            if kind == 'T':
+                lines.append(f'    {ename} ({n1} 0 {n2} 0) tline z0={model.z0:g} td={value:.6g}')
                 continue
             prim, par = _SPECTRE[kind]
             lines.append(f'    {ename} ({n1} {n2}) {prim} {par}={value:.6g}')
