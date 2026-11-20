@@ -55,6 +55,8 @@ PICK = ('simplest', 'best')
 FORM = ('auto', 'pi', 'tee')
 DC = ('data', 'no-ground', 'off')
 FLOAT_OHM = 1e9          # resistor to ground at a node without a DC path (SPICE netlists)
+TARGET_TIGHTER = 3.0     # the error limits are this much tighter near Options.ftarget
+TARGET_WIDTH = 0.15      # relative width of the region around it (1 sigma of a bell)
 # Model quality: one word for the error limits and the choice. 'standard' is the default of
 # Options; 'small' accepts more error for fewer elements; 'accurate' takes the lowest error.
 QUALITY = {
@@ -87,6 +89,12 @@ class Options:
     """Settings of :func:`extract`.
 
     fmin, fmax: fit band in Hz (default: all data; a 0 Hz point is never used).
+    ftarget: frequency of use in Hz (default: none). Around it (a bell of 15 % relative
+        width) the three error limits are three times tighter: every candidate is
+        judged over the whole band as always and, with the tighter limits, near this
+        frequency, and the refinement works on both. So the few elements are right
+        where the part is used and within the normal limits elsewhere. The result is
+        also reported at this frequency.
     trim_low: without fmin, leave out the DC region at the low end: the points whose
         S-parameters do not differ from those of the lowest point (by a tenth of the
         S-parameter error limit). They show the DC resistances and nothing of L and C;
@@ -137,6 +145,7 @@ class Options:
     """
     fmin: float = None
     fmax: float = None
+    ftarget: float = None
     trim_low: bool = True
     require: str = 'positive'
     pick: str = 'simplest'
@@ -163,6 +172,8 @@ class Options:
             raise ValueError(f'pick must be one of {PICK}')
         if self.form not in FORM:
             raise ValueError(f'form must be one of {FORM}')
+        if self.ftarget is not None and not self.ftarget > 0:
+            raise ValueError('ftarget must be positive')
         if self.dc not in DC:
             raise ValueError(f'dc must be one of {DC}')
         if not (self.float_resistor == 'auto'
@@ -215,6 +226,7 @@ class Candidate:
         self.trivial = trivial
         self.reactance, self.loss = reactance, loss
         self.refined = refined
+        self.near = None                         # the three errors near Options.ftarget
         self.score = float(error if score is None else score)   # <= 1: within the limits
 
     @staticmethod
@@ -590,8 +602,13 @@ class Model:
                             s=self.s_matrix(freq), z0=self.z0)
 
     def error(self):
-        """RMS |S difference| between model and data in the fit band."""
-        return _rms(self.s_matrix(self.freq) - self.s_data)
+        """RMS |S difference| between model and data in the fit band (each frequency counts
+        by the span it stands for, see :func:`span_weights`)."""
+        return _wrms(self.s_matrix(self.freq) - self.s_data, span_weights(self.freq))
+
+    def error_near(self, freq):
+        """RMS |S difference| around ``freq`` (Hz): the bell of Options.ftarget alone."""
+        return _wrms(self.s_matrix(self.freq) - self.s_data, target_weights(self.freq, freq))
 
     def error_db(self):
         return _db(self.error())
@@ -738,6 +755,38 @@ class Model:
 
 # --- helpers ----------------------------------------------------------------------------
 
+def span_weights(freq):
+    """Weight of each frequency point: the span of frequency it stands for, mean 1. A
+    sweep with equal steps gives 1 everywhere. With these weights an error is a mean over
+    frequency, not over points, so a sweep that is dense in one region (a logarithmic
+    sweep at its low end) does not pull the fit there."""
+    f = np.asarray(freq, dtype=float)
+    if f.size < 3:
+        return np.ones(f.size)
+    d = np.empty(f.size)
+    d[1:-1] = (f[2:] - f[:-2]) / 2
+    d[0], d[-1] = f[1] - f[0], f[-1] - f[-2]
+    return d / d.mean()
+
+
+def target_window(freq, ftarget):
+    """Bell around ``ftarget`` on a logarithmic frequency axis, 1 at its top."""
+    f = np.asarray(freq, dtype=float)
+    return np.exp(-0.5 * (np.log(f / ftarget) / TARGET_WIDTH) ** 2)
+
+
+def target_weights(freq, ftarget):
+    """Weights (mean 1) that pick the region around the frequency of use."""
+    w = span_weights(freq) * target_window(freq, ftarget)
+    return w / w.mean()
+
+
+def _wrms(x, w):
+    """Weighted RMS of x (frequency first) with one weight per frequency."""
+    x = np.abs(x.reshape(x.shape[0], -1)) ** 2
+    return float(np.sqrt(np.mean(w * x.mean(axis=1))))
+
+
 def _rms(x):
     return float(np.sqrt(np.mean(np.abs(x) ** 2)))
 
@@ -868,14 +917,22 @@ def netlist_admittance(connections, values, s):
         return 1 / v1
 
 
+def _score(e, ex, el, near, opt):
+    """The largest error over its limit; ``near``: the three errors near the frequency of
+    use (or None), whose limits are TARGET_TIGHTER times tighter."""
+    score = e / opt.target
+    if opt.reactance_percent > 0 and ex is not None:
+        score = max(score, 100 * ex / opt.reactance_percent)
+    if opt.loss_percent > 0 and el is not None:
+        score = max(score, 100 * el / opt.loss_percent)
+    if near is not None:
+        score = max(score, TARGET_TIGHTER * _score(*near, None, opt))
+    return score
+
+
 def score_of(cand, opt):
     """Score of a candidate for the limits of ``opt``: the largest error over its limit."""
-    score = cand.error / opt.target
-    if opt.reactance_percent > 0 and cand.reactance is not None:
-        score = max(score, 100 * cand.reactance / opt.reactance_percent)
-    if opt.loss_percent > 0 and cand.loss is not None:
-        score = max(score, 100 * cand.loss / opt.loss_percent)
-    return score
+    return _score(cand.error, cand.reactance, cand.loss, cand.near, opt)
 
 
 def pick_candidate(pool, opt):
@@ -918,6 +975,9 @@ class _BranchSearch:
         self.diff_of, self.accept = s_diff, accept
         self.data = data
         self.done = {}                           # network id -> list of Candidate
+        self.w = span_weights(branch.freq)
+        self.w_near = target_weights(branch.freq, opt.ftarget) if opt.ftarget else None
+        self.near = None                         # errors near ftarget of the last measure
         yii = np.diagonal(data.y, axis1=1, axis2=2)          # port admittances of the data
         self.den_x = np.abs(yii)
         self.den_r = np.maximum(np.abs(yii.real), np.abs(yii) / LOSS_FLOOR_Q)
@@ -945,6 +1005,7 @@ class _BranchSearch:
             self.trivial = Candidate(None, e, _rms(branch.y) if branch.trivial == 'open'
                                      else math.inf, branch.trivial, score=score,
                                      reactance=ex, loss=el)
+            self.trivial.near = self.near
 
     # --- measures -----------------------------------------------------------------------
 
@@ -973,7 +1034,8 @@ class _BranchSearch:
         return sd, dx, dr
 
     def s_error(self, yb):
-        e = float(np.sqrt(np.mean(self.diffs(yb)[0] ** 2)))
+        with np.errstate(all='ignore'):
+            e = float(np.sqrt(np.mean(self.w * self.diffs(yb)[0] ** 2)))
         return e if math.isfinite(e) else math.inf
 
     def measure(self, yb):
@@ -981,21 +1043,22 @@ class _BranchSearch:
         are the RMS over frequency at the port where they are largest."""
         opt = self.opt
         sd, dx, dr = self.diffs(yb)
-        e = float(np.sqrt(np.mean(sd ** 2)))
-        e = e if math.isfinite(e) else math.inf
-        ex = float(np.max(np.sqrt(np.mean(dx ** 2, axis=0))))
-        el = float(np.max(np.sqrt(np.mean(dr ** 2, axis=0))))
-        score = e / opt.target
-        if opt.reactance_percent > 0:
-            score = max(score, 100 * ex / opt.reactance_percent)
-        if opt.loss_percent > 0:
-            score = max(score, 100 * el / opt.loss_percent)
-        return score, e, ex, el
+        def errors(w):
+            with np.errstate(all='ignore'):
+                out = (float(np.sqrt(np.mean(w * sd ** 2))),
+                       float(np.max(np.sqrt(np.mean(w[:, None] * dx ** 2, axis=0)))),
+                       float(np.max(np.sqrt(np.mean(w[:, None] * dr ** 2, axis=0)))))
+            return tuple(v if math.isfinite(v) else math.inf for v in out)
+        e, ex, el = errors(self.w)
+        self.near = errors(self.w_near) if self.w_near is not None else None
+        return _score(e, ex, el, self.near, opt), e, ex, el
 
     def make(self, comp, error_y, refined=False):
         score, e, ex, el = self.measure(comp.eval(self.b.freq, 0))
-        return Candidate(comp, e, error_y, None, score=score, reactance=ex, loss=el,
-                         refined=refined)
+        c = Candidate(comp, e, error_y, None, score=score, reactance=ex, loss=el,
+                      refined=refined)
+        c.near = self.near
+        return c
 
     # --- candidates ---------------------------------------------------------------------
 
@@ -1037,11 +1100,19 @@ class _BranchSearch:
         n = self.b.freq.size
         wx = 100 / opt.reactance_percent if opt.reactance_percent > 0 else 0.0
         wl = 100 / opt.loss_percent if opt.loss_percent > 0 else 0.0
+        root_w = np.sqrt(self.w)
+        root_near = np.sqrt(self.w_near) if self.w_near is not None else None
 
         def residuals(x):
             yb = netlist_admittance(conns, sign * np.exp(x), s)
             sd, dx, dr = self.diffs(yb)
-            r = np.concatenate([sd / opt.target, wx * dx.ravel(), wl * dr.ravel()]) / math.sqrt(n)
+            parts = [root_w * sd / opt.target, wx * (root_w[:, None] * dx).ravel(),
+                     wl * (root_w[:, None] * dr).ravel()]
+            if root_near is not None:            # the same near the frequency of use, tighter
+                parts += [TARGET_TIGHTER * root_near * sd / opt.target,
+                          TARGET_TIGHTER * wx * (root_near[:, None] * dx).ravel(),
+                          TARGET_TIGHTER * wl * (root_near[:, None] * dr).ravel()]
+            r = np.concatenate(parts) / math.sqrt(n)
             return np.where(np.isfinite(r), r, 1e6)
 
         span = math.log(REFINE_SPAN)
@@ -1138,12 +1209,17 @@ class _Data:
         self.nports = y_sym.shape[-1]
         self.at = lambda fraction: None          # progress: where the work stands (0..1)
         self.y_dc = None                         # Y-matrix in the DC region of the data
+        self.w = span_weights(f)
+
+    def rms(self, diff):
+        """Weighted RMS of S-parameter differences (frequency, n, n)."""
+        return _wrms(diff, self.w)
 
     def y_diff(self, y):
         return _y2s(y, self.z0) - self.s_ref
 
     def y_error(self, y):
-        return _rms(self.y_diff(y))
+        return self.rms(self.y_diff(y))
 
 
 def _extract_pi(d):
@@ -1263,7 +1339,7 @@ def _try_coupling(d, model, ports, before=math.inf):
         return None
     if not K_MIN <= abs(m0) / math.sqrt(l1 * l2) <= 1:
         return None
-    if _rms(diff(q11, q22, 0.0, m0, np.zeros_like(yij))) >= before:
+    if d.rms(diff(q11, q22, 0.0, m0, np.zeros_like(yij))) >= before:
         return None
 
     def fit(use_rc):
@@ -1287,7 +1363,7 @@ def _try_coupling(d, model, ports, before=math.inf):
             r_grid = r0 * np.linspace(0.0, 3.0, 13) if use_rc else np.zeros(1)
             for _ in range(8):                   # coarse grid, then finer ones around it
                 _, mutual, rc = min(
-                    ((_rms(diff(z11 - r, z22 - r, r, m, y_rest)), m, r)
+                    ((d.rms(diff(z11 - r, z22 - r, r, m, y_rest)), m, r)
                      for m in m_grid for r in r_grid), key=lambda t: t[0])
                 dm = abs(m_grid[1] - m_grid[0])
                 dr = max(r_grid[1:] - r_grid[:-1]) if use_rc else 0
@@ -1401,6 +1477,9 @@ def extract(network, options=None, catalog=None, progress=None, cancel=None):
     s_data = network.s[keep]
     n = network.nports
     eye = np.eye(n)
+    if opt.ftarget is not None and not f[0] <= opt.ftarget <= f[-1]:
+        raise ValueError(f'the frequency of use, {opt.ftarget / 1e9:g} GHz, is outside the fit '
+                         f'band {f[0] / 1e9:g} to {f[-1] / 1e9:g} GHz')
     left_out, y_dc = None, None
     if opt.trim_low and opt.fmin is None:
         k = _dc.low_cut(f, s_data, opt.target)
@@ -1515,6 +1594,7 @@ def describe(model):
              f'else {o.tolerance:g} x the best, refine {"on" if o.refine else "off"}, '
              f'up to {o.max_elements} elements per branch, delay {_delay_text(o.delay)}, '
              f'sequential {"on" if o.sequential else "off"}, DC paths {o.dc}, '
+             + (f'frequency of use {o.ftarget / 1e9:g} GHz, ' if o.ftarget else '') +
              f'form {o.form}, coupled coils {"on" if o.coupling else "off"}']
     if model.reciprocity_error > 1e-6:
         lines.append(f'data are not reciprocal: RMS |S - S^T|/2 = '

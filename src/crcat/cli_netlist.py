@@ -57,6 +57,9 @@ def main(argv=None):
     ap.add_argument('file', help='Touchstone file (.sNp)')
     ap.add_argument('--fmin', type=float, default=None, help='lower end of the fit band, GHz')
     ap.add_argument('--fmax', type=float, default=None, help='upper end of the fit band, GHz')
+    ap.add_argument('--ftarget', type=float, default=None,
+                    help='frequency of use, GHz: the error limits are three times tighter '
+                         'around it, and the result is also reported there')
     ap.add_argument('--quality', choices=tuple(model.QUALITY), default='standard',
                     help='error limits and choice in one word: small (fewer elements, more '
                          'error), standard (default), accurate (lowest error); --pick and '
@@ -148,6 +151,7 @@ def main(argv=None):
         opt = model.Options(
             fmin=None if args.fmin is None else args.fmin * 1e9,
             fmax=None if args.fmax is None else args.fmax * 1e9,
+            ftarget=None if args.ftarget is None else args.ftarget * 1e9,
             require=args.require, pick=args.pick, target_db=args.target_db,
             reactance_percent=args.reactance_percent, loss_percent=args.loss_percent,
             refine=not args.no_refine,

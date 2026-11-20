@@ -164,6 +164,11 @@ def test_gui_quality_and_advanced(app, tmp_path):
     assert win.quality.currentData() is None and win.advanced.isHidden()
     win.target.setValue(-40)
     assert win.quality.currentData() == 'accurate'
+    # the frequency of use: a field of the simple row
+    assert win.options().ftarget is None and win.ftarget.text() == 'not set'
+    win.ftarget.setValue(20)
+    assert win.options().ftarget == 20e9
+    win.ftarget.setValue(0)
     # hidden settings that differ from the defaults are named
     win.require.setCurrentIndex(win.require.findData('positive-r'))
     assert win.line_mode.currentData() == 'auto' and not win.delay.isEnabled()
@@ -200,6 +205,15 @@ def test_gui_quality_and_advanced(app, tmp_path):
     n = win.model.n_elements()
     win.quality.setCurrentIndex(win.quality.findData('small'))
     assert win.worker is None and win.model.options.target_db == -30
+    win.ftarget.setValue(20)                         # needs a new search
+    assert win.model is None
+    win.run()
+    wait_for(app, lambda: win.model is not None and win.worker is None)
+    assert 'At 20 GHz: L ' in win.status.text() and win.model.options.ftarget == 20e9
+    win.ftarget.setValue(0)
+    win.run()
+    wait_for(app, lambda: win.model is not None and win.worker is None)
+    assert 'At 20' not in win.status.text()
     assert win.model.n_elements() <= n
     # a setting that needs a new search takes the model away
     for change in (lambda: win.form.setCurrentIndex(win.form.findData('pi')),

@@ -160,6 +160,17 @@ class MainWindow(QMainWindow):
         row_simple.addWidget(self.fmax)
         row_simple.addWidget(self.full_range)
         row_simple.addSpacing(16)
+        self.ftarget = QDoubleSpinBox(decimals=3, maximum=1e4, suffix=' GHz')
+        self.ftarget.setSpecialValueText('not set')      # 0 = no frequency of use
+        self.ftarget.setKeyboardTracking(False)
+        self.ftarget.setToolTip(
+            'The frequency where the part is used. Around it the error limits are three '
+            'times tighter, so the model is right there first and within the normal '
+            'limits elsewhere; L, Q of model and data are shown for it. 0: not set.')
+        self.ftarget.valueChanged.connect(lambda *_: self._invalidate())
+        row_simple.addWidget(QLabel('Used at'))
+        row_simple.addWidget(self.ftarget)
+        row_simple.addSpacing(16)
         row_simple.addWidget(QLabel('Model:'))
         row_simple.addWidget(self.quality)
         row_simple.addSpacing(16)
@@ -581,6 +592,7 @@ class MainWindow(QMainWindow):
     def options(self):
         return model.Options(
             fmin=self.fmin.value() * 1e9 or None, fmax=self.fmax.value() * 1e9 or None,
+            ftarget=self.ftarget.value() * 1e9 or None,
             require=self.require.currentData(), pick=self.pick.currentData(),
             target_db=self.target.value(), reactance_percent=self.reactance_percent.value(),
             loss_percent=self.loss_percent.value(), refine=self.refine.isChecked(),
@@ -609,7 +621,7 @@ class MainWindow(QMainWindow):
 
     def _lock_settings(self, on):
         """No changes of file and settings while a search runs."""
-        for w in (self.file_edit, self.fmin, self.fmax, self.full_range, self.quality,
+        for w in (self.file_edit, self.fmin, self.fmax, self.full_range, self.ftarget, self.quality,
                   self.advanced):
             w.setEnabled(not on)
 
@@ -701,7 +713,8 @@ class MainWindow(QMainWindow):
         if warnings:
             text += '\nWarning: ' + '\nWarning: '.join(warnings)
         self.assessment = a = advice.assess(m, self.network, self.data_check)
-        self.status.setText(a.text + '\n' + text)
+        self.status.setText(a.text + ('\n' + a.target[0].upper() + a.target[1:] if a.target else '')
+                            + '\n' + text)
         self.status.setToolTip('\n'.join(model.describe(m)))
         self._show_verdict(a.level, a.suggestions)
         self.copy_button.setEnabled(True)

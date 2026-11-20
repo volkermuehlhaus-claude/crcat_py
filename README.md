@@ -31,6 +31,7 @@ the [FAQ](doc/FAQ.md).
 - [Installation](#installation)
 - [From S-parameters to a netlist](#from-s-parameters-to-a-netlist)
   - [Data check, verdict and suggestions](#data-check-verdict-and-suggestions)
+  - [Frequency of use](#frequency-of-use)
   - [Size against accuracy](#size-against-accuracy)
   - [Line at the ports for a distributed part](#line-at-the-ports-for-a-distributed-part)
   - [Testbench](#testbench)
@@ -124,7 +125,7 @@ C_p1p2 p1p2_n3 p2 1.70939e-13
 
 Five elements per branch are a real limit for inductors: the series resistance of the 500 pH
 inductor above (snp2le example `ind_500pH_ihp-sg13cmos5l.s2p`, fitted to 50 GHz) becomes a
-constant 2.9 ohm with the default choice (7 elements, -41.3 dB), and rises from 2.8 to
+constant 3.0 ohm with the default choice (7 elements, -41.4 dB), and rises from 2.8 to
 4.9 ohm with `--pick best` (14 elements, -48.7 dB); neither has the 1.8 ohm at low
 frequency. The L, R, Q plot shows this.
 
@@ -134,7 +135,8 @@ plots (see below) and the schematics of all branches (`_crcat_schematic.png`).
 
 ![crcat-gui](doc/gui.png)
 
-The window asks for three things: the file, the fit band, and the model quality. It
+The window asks for three things: the file, the fit band, and the model quality; a
+fourth, the frequency where the part is used, is optional. It
 remembers the last data file and loads it at the next start; "Browse" opens in its
 folder, and the save dialog in the folder of the last results.
 
@@ -145,7 +147,7 @@ folder, and the save dialog in the folder of the last results.
 | Most accurate | the network with the lowest error for each branch | `accurate` |
 
 With a model at hand, another quality takes effect at once, without a new search. For the
-500 pH inductor above: Small and Standard 7 elements (-41.3 dB), Most accurate 14 elements
+500 pH inductor above: Small and Standard 7 elements (-41.4 dB), Most accurate 14 elements
 (-48.7 dB); for the 170 fF MIM capacitor: 3 elements (-33.3 dB, C within 7 %), 5 elements
 (-49.7 dB) and 11 elements (C within 0.014 %).
 
@@ -221,6 +223,45 @@ When the model is not good, the verdict comes with suggestions that follow from 
 check and from what went wrong: a lower upper frequency, negative L and C (resistors stay
 positive), more elements, the tee form. In the window each one is a button that changes
 the setting and runs again.
+
+### Frequency of use
+
+A few elements cannot follow the loss of a part over a wide band, so the model takes a
+compromise: within the limits everywhere, exactly right nowhere. If the part is used at
+one frequency, say so (`--ftarget`, "Used at" in the window), and the model is made right
+there first.
+
+- **Tighter limits near that frequency.** Every candidate is judged over the whole band
+  as always, and once more in a region around the frequency of use (a bell of 15 %
+  relative width), where the three error limits are three times tighter: -50 dB, 6.7 %
+  and 10 % with the defaults. The refinement of the element values works on both. The
+  band is still held to the normal limits, so the model stays usable at DC and at
+  harmonics.
+- **The result at that frequency.** The verdict gets a line with model and data there:
+
+```
+good: 0.01 to 50 GHz: 7 elements, S-parameters within -41.0 dB, L within 0.12 %, Q within 13 % (median)
+at 20 GHz: L 549.4pH (data 549.3pH), Q 16.8 (data 15.3), S-parameters within -46.1 dB there
+```
+
+What it changed on three example files (Standard quality, model against data at the
+frequency of use):
+
+| Part, fit band | Used at | Q without | Q with | Q of the data | Whole band, without / with |
+|---|---|---|---|---|---|
+| 500 pH inductor, to 50 GHz | 5 GHz | 5.59 | 6.83 | 6.82 | -41.4 / -39.8 dB |
+| | 20 GHz | 19.2 | 16.8 | 15.3 | -41.4 / -41.0 dB |
+| | 40 GHz | 9.88 | 8.47 | 7.88 | -41.4 / -44.0 dB, 9 elements instead of 7 |
+| 40 pH inductor, to 150 GHz | 28 GHz | 14.4 | 10.7 | 10.9 | -44.0 / -48.4 dB, 6 elements instead of 5 |
+| | 77 GHz | 20.0 | 16.1 | 15.3 | -44.0 / -41.6 dB |
+| 170 fF MIM, to 100 GHz | 28 GHz | 32.3 | 33.8 | 33.4 | -49.7 / -40.9 dB, 6 elements instead of 5 |
+
+The whole-band error can get worse, as for the MIM capacitor: the elements are spent
+where the part is used. The frequency of use must lie in the fit band.
+
+All errors are means over frequency, not over points: each point counts by the span of
+frequency it stands for. A sweep with equal steps is not affected. A sweep that is dense
+in one region, such as a logarithmic sweep at its low end, no longer pulls the fit there.
 
 ### Size against accuracy
 
@@ -346,15 +387,15 @@ ground for its substrate loss, a leakage path that the part does not have.
   lines a short), with their resistance, each with the other ports open:
 
 ```
-p1 - gnd   CR8 SerRC           -48.7 dB  X   8.04 %  loss   8.57 %  R=16.68Ohm C=13.31fF
-p2 - gnd   CR8 SerRC refined   -47.3 dB  X   4.54 %  loss   8.28 %  R=14.68Ohm C=13.99fF
-p1 - p2    CR23 IV-3 refined   -45.3 dB  X   3.74 %  loss   18.8 %  R=2.93Ohm L=528.7pH C=4.643fF
-DC paths: p1 - p2 2.93Ohm; none to ground
-model (pi form): 7 elements, S-parameter error -41.3 dB rms, -33.8 dB max
+p1 - gnd   CR8 SerRC           -48.6 dB  X    8.1 %  loss   8.63 %  R=16.68Ohm C=13.31fF
+p2 - gnd   CR8 SerRC refined   -47.3 dB  X   4.57 %  loss   8.35 %  R=14.68Ohm C=13.99fF
+p1 - p2    CR23 IV-3 refined   -45.5 dB  X   3.82 %  loss   18.4 %  R=2.957Ohm L=528.8pH C=4.638fF
+DC paths: p1 - p2 2.957Ohm; none to ground
+model (pi form): 7 elements, S-parameter error -41.4 dB rms, -33.8 dB max
 ```
 
-For this inductor the rule costs little: -41.3 dB instead of -41.9 dB, median Q error 26 %
-instead of 18 %. The 170 fF MIM capacitor, the 880 um line and a centre-tapped inductor
+For this inductor the rule costs little: about 0.5 dB of S-parameter error, and a median
+Q error of 26 % instead of 18 %. The 170 fF MIM capacitor, the 880 um line and a centre-tapped inductor
 had no leak and are unchanged. Data that start high (above a tenth of the top frequency of
 the fit band) do not show what happens at DC; `--dc data` then has nothing to go on for
 that branch, `--dc no-ground` still works.
@@ -481,6 +522,7 @@ Main options (`crcat-netlist --help` lists all):
 | Option | Meaning |
 |---|---|
 | `--fmin`, `--fmax` (GHz) | fit band; the plot still shows all data |
+| `--ftarget` (GHz) | frequency of use: error limits three times tighter around it, result also reported there, see [Frequency of use](#frequency-of-use) |
 | `--keep-low` | without `--fmin`: also fit the DC region at the low end, which is left out by default |
 | `--quality small`, `standard`, `accurate` | error limits and choice in one word, see the table above; `--pick` and the three limit options override it |
 | `--require positive` | all element values positive (default) |

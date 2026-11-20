@@ -29,12 +29,14 @@ class Suggestion:
 
 
 class Assessment:
-    def __init__(self, level, text, details, suggestions, quantities):
+    def __init__(self, level, text, details, suggestions, quantities, target=''):
         self.level, self.text, self.details = level, text, details
         self.suggestions, self.quantities = suggestions, quantities
+        self.target = target                     # the model at the frequency of use
 
     def lines(self):
-        return [f'{self.level}: {self.text}'] + self.details + \
+        return [f'{self.level}: {self.text}'] + ([self.target] if self.target else []) + \
+            self.details + \
             [f'suggestion: {s.label} ({s.why})' for s in self.suggestions]
 
 
@@ -57,6 +59,34 @@ def _series_errors(model, network):
             r = r[np.isfinite(r)]
             return float(np.median(r)) if r.size else math.nan
         return ('C' if cap else 'L'), med(xm, xd), med(zs_m.real, zs_d.real), med(qm, qd)
+
+
+def at_frequency(model, network, freq):
+    """The model against the data at the data point nearest to ``freq`` (Hz): a line of
+    text and the numbers. For a 2-port the series L or C and Q of model and data, for any
+    part the S-parameter error near that frequency."""
+    from .component import format_value
+    f_all = network.f
+    i = int(np.argmin(np.abs(f_all - freq)))
+    f = f_all[i:i + 1]
+    near = 20 * math.log10(max(model.error_near(freq), 1e-30))
+    out = {'frequency': float(f[0]), 'error_db': near}
+    text = f'at {f[0] / 1e9:.4g} GHz: '
+    if model.nports == 2:
+        w = 2 * np.pi * f[0]
+        (zs_d, zin_d), (zs_m, zin_m) = (series_quantities(s, model.z0)
+                                        for s in (network.s[i:i + 1], model.s_matrix(f)))
+        with np.errstate(all='ignore'):
+            cap = zs_d.imag[0] < 0
+            xd, xm = ((-1 / (w * zs_d.imag[0]), -1 / (w * zs_m.imag[0])) if cap
+                      else (zs_d.imag[0] / w, zs_m.imag[0] / w))
+            qd, qm = (abs(z.imag[0]) / z.real[0] for z in (zin_d, zin_m))
+        name = 'C' if cap else 'L'
+        out.update({name: (float(xm), float(xd)), 'Q': (float(qm), float(qd))})
+        if all(math.isfinite(v) for v in (xm, xd, qm, qd)):
+            text += (f'{name} {format_value(xm, name)} (data {format_value(xd, name)}), '
+                     f'Q {qm:.3g} (data {qd:.3g}), ')
+    return text + f'S-parameters within {near:.1f} dB there', out
 
 
 def _good_up_to(model):
@@ -117,4 +147,8 @@ def assess(model, network, check=None):
                 check is not None and check.form == 'tee':
             suggestions.append(Suggestion('Try the tee form', 'fewer unphysical branches in the data',
                                           form='tee'))
-    return Assessment(level, text, details, suggestions[:3], quantities)
+    target = ''
+    if opt.ftarget:
+        target, numbers = at_frequency(model, network, opt.ftarget)
+        quantities['target'] = numbers
+    return Assessment(level, text, details, suggestions[:3], quantities, target)
