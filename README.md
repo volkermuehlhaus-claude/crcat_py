@@ -70,10 +70,14 @@ crcat-netlist mim_170fF.s2p --fmax 100
 crcat-gui                       # the same in a window
 ```
 
+![from the Touchstone file to the netlist](doc/concept_flow.png)
+
 A reciprocal n-port is exactly a set of branches: one from each port to ground and one
 between each pair of ports (for a 2-port, the pi network). Each branch is a one-port, so the
 catalog can model it with up to five R, L, C, and the netlist is these networks wired
 together.
+
+![pi form for two and three ports, tee form](doc/concept_forms.png)
 
 For each branch, a candidate network is judged in three ways:
 
@@ -268,6 +272,14 @@ good: 0.01 to 50 GHz: 7 elements, S-parameters within -41.0 dB, L within 0.12 %,
 at 20 GHz: L 549.4pH (data 549.3pH), Q 16.8 (data 15.3), S-parameters within -46.1 dB there
 ```
 
+The 500 pH inductor without a target frequency (left) and with 20 GHz as target (right,
+dotted line): the constant series resistance of the model moves to the value of the data
+there, and Q follows.
+
+| Without | Target frequency 20 GHz |
+|---|---|
+| ![without a target frequency](doc/target_without.png) | ![with a target frequency](doc/target_with.png) |
+
 What it changed on three example files (Standard quality, model against data at the
 target frequency):
 
@@ -306,9 +318,7 @@ A few lumped elements cannot follow a part that is long against the wavelength. 
 line can: the tool then puts a line at each port and models only what is left between the
 lines with lumped elements.
 
-```
-port 1 --[ line ]--+-- lumped model --+--[ line ]-- port 2
-```
+![lines at the ports with a lumped part between them](doc/schematic_line.png)
 
 This happens by itself (`--delay auto`, the default), and only when it is needed:
 
@@ -418,6 +428,8 @@ DC paths: p1 - p2 2.957Ohm; none to ground
 model (pi form): 7 elements, S-parameter error -41.4 dB rms, -33.8 dB max
 ```
 
+![the same inductor without and with the rule](doc/dc_before_after.png)
+
 For this inductor the rule costs little: about 0.5 dB of S-parameter error, and a median
 Q error of 26 % instead of 18 %. The 170 fF MIM capacitor, the 880 um line and a centre-tapped inductor
 had no leak and are unchanged. Data that start high (above a tenth of the top frequency of
@@ -467,6 +479,8 @@ negative real part, which no positive resistor can give. For a 2-port, the tool 
 also tries the tee form when a pi branch misses its limit, and keeps the form with the
 lower error. A shorted series leg is a candidate there, like an open branch in the pi form.
 
+![tee form](doc/schematic_tee.png)
+
 Example: the same MIM capacitor over the full 1-300 GHz. In the pi form the port-2 branch of
 the data has a negative real part in 96 % of the band (model error -19.3 dB). The tee form:
 
@@ -487,6 +501,8 @@ if that helps. What the coils do not explain of the branch between the two ports
 branch of its own. The replacement is kept if it lowers the error. A quick test comes
 first: the coils of the data with one coupling factor must show a coupling of at least
 0.05 and beat the three branches as they are; otherwise no search is made.
+
+![coupled coils](doc/schematic_coupled.png)
 
 Example: a center-tapped inductor (3-port, center tap at port 3), fitted to 30 GHz. As a pi
 of positive elements over its full band the error was -12.5 dB. With coupled coils:
@@ -833,6 +849,9 @@ pip install -e ".[dev]"
 python -m pytest            # fast tests (about 4 min, GUI offscreen; ngspice tests skip without ngspice)
 python -m pytest -m slow    # catalog validation, full searches (about 2 min)
 ```
+
+The pictures of this README are made by `python tools/make_doc_figures.py` (concept
+diagrams, example schematics); the window screenshots are taken offscreen.
 
 The tests check against CRCat's README example and its MATLAB tests (`CRCompTest.m`,
 `CRSproutTest.m`, `CRFitAutoTest.m`); the test data in `tests/data` come from CRCat.

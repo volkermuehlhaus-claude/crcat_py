@@ -31,6 +31,8 @@ A subcircuit of resistors, inductors and capacitors that has the same S-paramete
 part in the band you chose, within a stated error. Some models also contain coupled
 inductors (a `K` element) or a short piece of ideal line at the ports (a `T` element).
 
+![from the Touchstone file to the netlist](concept_flow.png)
+
 ```
 .SUBCKT mim_170fF_model p1 p2
 C_p1 p1 0 8.98727e-15
@@ -237,6 +239,8 @@ DC paths: p1 - p2 2.93Ohm; none to ground
 `--dc no-ground` is stricter: never a DC path from a port to ground, whatever the data
 say. Use it when the data start too high to show the DC behaviour.
 
+![the same inductor without and with the rule](dc_before_after.png)
+
 **The DC resistance of a through path is not guaranteed.** The series resistance of the
 model is fitted in the RF band. In the inductor example above it is 2.9 ohm, where the
 data show 1.8 ohm at the lowest frequency. If the bias current through the part matters,
@@ -285,6 +289,8 @@ T_p1 p1 0 p1_c 0 Z0=50.78 TD=2.52762e-12
 This happens by itself, and only when the data check finds the part longer than 90
 degrees at the top of the fit band. The result says so and names delay and impedance. If
 the model with lines is not better than the one without, the one without is kept.
+
+![lines at the ports with a lumped part between them](schematic_line.png)
 
 The line is lossless, so the loss of the part is in the lumped elements. The `T` element
 is a standard SPICE element. If your flow does not accept it, `--delay off` gives a model
