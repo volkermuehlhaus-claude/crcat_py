@@ -84,6 +84,11 @@ class Options:
         a pi branch misses the error limit; the form with the lower error is kept.
     coupling: replace a branch that misses the limit (or has a negative element) and its
         two neighbours by coupled coils, if that lowers the error (pi form).
+    sequential: pi form: fit the branches between ports first; the target of each branch
+        to ground is then the port admittance Yii minus the models of those branches, not
+        minus their data, so it makes up for what they missed (J. Rautio's suggestion).
+        Off by default: what a model missed is often not a physical admittance, and the
+        branch to ground then misses its limits (see the README for the comparison).
     delay: a piece of line (reference impedance, this delay) at each port, removed from
         the data before the fit and put back in the netlist as a line element: 'off' or
         the delay in seconds. For data with a known feed line; a line that is short
@@ -104,6 +109,7 @@ class Options:
     max_elements: int = 5
     form: str = 'auto'
     coupling: bool = True
+    sequential: bool = False
     delay: object = 'off'
     full_search: bool = False
     dps: int = DEFAULT_DPS
@@ -881,12 +887,28 @@ def _extract_pi(d):
         node2 = f'p{ports[1]}' if len(ports) == 2 else '0'
         branches.append(Branch(f'p{ports[0]}', node2, 'p' + 'p'.join(str(p) for p in ports),
                                d.f, yb[ports], 'open', ports))
-    for n, b in enumerate(branches):
-        d.at(0.6 * n / len(branches))
+    # The branches between ports first. With Options.sequential the branches to ground
+    # then make up for what those models missed: the target of the branch at port i is
+    # Yii minus the *models* of the branches at that port (not minus their data), and its
+    # candidates are judged with those models in place. So Yii of the model follows the data.
+    order = [b for b in branches if len(b.ports) == 2] + [b for b in branches if len(b.ports) == 1]
+    context = d.y                                # the data, later with the pair models
+    for n, b in enumerate(order):
+        d.at(0.6 * n / len(order))
+        y0 = b.y                                 # what this branch is in `context`
+        if d.opt.sequential and len(b.ports) == 1:
+            if context is d.y:
+                context = d.y.copy()
+                for pair in order:
+                    if len(pair.ports) == 2:
+                        _stamp(context, pair.ports, pair.admittance(d.f) - pair.y)
+            i = b.ports[0]
+            b.y = y0 + sum(pair.y - pair.admittance(d.f) for pair in order
+                           if len(pair.ports) == 2 and i in pair.ports)
 
-        def s_error(ycand, b=b):
-            y = d.y.copy()
-            _stamp(y, b.ports, ycand - b.y)
+        def s_error(ycand, b=b, y0=y0, context=context):
+            y = context.copy()
+            _stamp(y, b.ports, ycand - y0)
             return d.y_diff(y)
         _BranchSearch(b, s_error, d, d.cat, d.opt, lambda b=b: d.tick(f'branch {b.name}')).run()
     return Model(d.nports, d.z0, branches, d.f, d.s_data, d.opt, 'pi')
@@ -1161,6 +1183,7 @@ def describe(model):
              f'{o.reactance_percent:g} % (reactance), {o.loss_percent:g} % (loss), '
              f'else {o.tolerance:g} x the best, refine {"on" if o.refine else "off"}, '
              f'up to {o.max_elements} elements per branch, delay {_delay_text(o.delay)}, '
+             f'sequential {"on" if o.sequential else "off"}, '
              f'form {o.form}, coupled coils {"on" if o.coupling else "off"}']
     if model.reciprocity_error > 1e-6:
         lines.append(f'data are not reciprocal: RMS |S - S^T|/2 = '

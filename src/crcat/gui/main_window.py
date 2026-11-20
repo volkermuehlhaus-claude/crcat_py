@@ -99,6 +99,12 @@ class MainWindow(QMainWindow):
             'A piece of line (reference impedance, this delay) at each port, removed from the '
             'data before the fit and put back in the netlist as a line element. For data '
             'with a known feed line.')
+        self.sequential = QCheckBox('Sequential')
+        self.sequential.setChecked(defaults.sequential)
+        self.sequential.setToolTip(
+            'Pi form: fit the branches between ports first, then each branch to ground to the '
+            'port admittance minus those models (not minus their data), so it makes up for '
+            'what they missed')
         self.format = QComboBox()
         for key in netlist.FORMATS:
             self.format.addItem(key, key)
@@ -118,6 +124,7 @@ class MainWindow(QMainWindow):
         form4.addRow('Line at each port', self.delay)
         form4.addRow('', self.coupling)
         form4.addRow('', self.refine)
+        form4.addRow('', self.sequential)
         row_opt = QHBoxLayout()
         for form in (form1, form2, form3, form4):
             row_opt.addLayout(form)
@@ -280,6 +287,7 @@ class MainWindow(QMainWindow):
             loss_percent=self.loss_percent.value(), refine=self.refine.isChecked(),
             max_elements=self.max_elements.value(),
             form=self.form.currentData(), coupling=self.coupling.isChecked(),
+            sequential=self.sequential.isChecked(),
             delay=self.delay.value() * 1e-12 or 'off')
 
     def run(self):

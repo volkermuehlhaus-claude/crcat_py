@@ -82,6 +82,9 @@ def main(argv=None):
                     help="line at each port (reference impedance), removed before the fit "
                          "and put back in the netlist as a line element: off (default) or the "
                          "delay in ps")
+    ap.add_argument('--sequential', action='store_true',
+                    help='pi form: fit the branches to ground to the port admittance minus the '
+                         'models (not the data) of the branches between ports')
     ap.add_argument('--no-coupling', action='store_true',
                     help='do not replace branches by coupled coils (K element)')
     ap.add_argument('--format', choices=netlist.FORMATS + ('both',), default='spice',
@@ -113,6 +116,7 @@ def main(argv=None):
             refine=not args.no_refine,
             tolerance=args.tolerance, max_elements=args.max_elements,
             form=args.form, coupling=not args.no_coupling, full_search=args.full_search,
+            sequential=args.sequential,
             delay='off' if args.delay == 'off' else float(args.delay) * 1e-12)
         m = model.extract(network, opt)
     except ValueError as ex:

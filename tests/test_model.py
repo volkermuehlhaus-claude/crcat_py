@@ -442,6 +442,31 @@ def test_negative_values_are_flagged():
     assert 'WARNING: negative element values: L_p1' in netlist.to_spice(m)
 
 
+# --- sequential fitting -------------------------------------------------------------------
+
+def test_sequential_branch_to_ground_makes_up_for_the_series_model():
+    # series branch of four elements, but only two allowed: its model misses something.
+    # Fitted in sequence, the branches to ground get that as part of their target; the
+    # series branch is the same, and exact data give the same model either way.
+    f = np.linspace(0.5e9, 40e9, 60)
+    parts = {(1,): ('C', [20e-15]), (2,): ('C', [30e-15]),
+             (1, 2): ('X-1', [0.5, 0.4e-9, 2.0, 0.1e-9])}
+    net = make_network(2, parts, f=f)
+    opt = dict(form='pi', coupling=False, max_elements=2, require='any', pick='best')
+    plain = model.extract(net, model.Options(**opt))
+    seq = model.extract(net, model.Options(sequential=True, **opt))
+    assert seq.branches[2].chosen.values_text() == plain.branches[2].chosen.values_text()
+
+    # the target of a branch to ground: Yii minus the model of the series branch
+    b = seq.branches[0]
+    assert np.allclose(b.y, net.y[:, 0, 0] - seq.branches[2].admittance(f), rtol=1e-9)
+    exact = make_network(2, TWO_PORT)
+    a = model.extract(exact, model.Options(pick='best'))
+    b = model.extract(exact, model.Options(pick='best', sequential=True))
+    chosen_a = [(x.chosen.label, x.chosen.values_text()) for x in a.branches]
+    assert chosen_a == [(x.chosen.label, x.chosen.values_text()) for x in b.branches]
+
+
 # --- lines at the ports -----------------------------------------------------------------
 
 def test_line_at_each_port():

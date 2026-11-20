@@ -190,6 +190,27 @@ Each coil must have an inductor that carries the whole coil current, so coils wi
 capacitor across their terminals (a transformer whose only other branches go to ground) are
 not replaced.
 
+### Sequential fitting
+
+By default every branch is fitted to its own data: the branch to ground at port i to the
+sum of column i of Y. With `--sequential` (a suggestion of J. Rautio) the branches between
+ports are fitted first, and the target of the branch to ground becomes Yii minus the
+*models* of those branches. The branch to ground then makes up for what the series models
+missed, and Yii of the model follows the data more closely.
+
+It is off by default, because what a series model missed is often not the admittance of
+any R, L, C network. Compared on the example files (same settings otherwise):
+
+| Data | default | sequential |
+|---|---|---|
+| 500 pH inductor (snp2le example), to 50 GHz | -41.9 dB, median Q error 18 % | -41.4 dB, 16 % |
+| 500 pH inductor (lumpedmodel example) | -39.8 dB, 27 % | -40.1 dB, 25 % |
+| 170 fF MIM, to 100 GHz | -49.7 dB, no warning | -42.7 dB, 1 warning |
+| center-tapped inductor, to 30 GHz | -38.9 dB, no warning | -31.6 dB, 3 warnings |
+
+So it gives a small gain in Q for the two inductors and a loss for the capacitor and the
+center-tapped inductor. Worth a try for a 2-port inductor; the L, R, Q plot shows the result.
+
 ### Options
 
 Main options (`crcat-netlist --help` lists all):
@@ -208,6 +229,7 @@ Main options (`crcat-netlist --help` lists all):
 | `--no-refine` | keep the element values of the closed-form synthesis |
 | `--max-elements` | most elements per branch (1..5) |
 | `--form auto`, `pi`, `tee` | auto (default): pi, and the tee form for a 2-port if a pi branch misses the limit |
+| `--sequential` | pi form: fit the branches to ground to the port admittance minus the models, not the data, of the branches between ports |
 | `--no-coupling` | never use coupled coils |
 | `--delay` (ps) | a line of the reference impedance and this delay at each port: removed from the data before the fit, written as a `T` element (Spectre `tline`) |
 
