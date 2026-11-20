@@ -279,6 +279,16 @@ class MainWindow(QMainWindow):
             w.currentIndexChanged.connect(self._settings_changed)
         for w in (self.coupling, self.refine, self.sequential):
             w.toggled.connect(self._settings_changed)
+        # settings that need a new search: a model made with other values is not shown
+        for w in (self.fmin, self.fmax):
+            w.setKeyboardTracking(False)         # act on the finished number
+            w.valueChanged.connect(lambda *_: self._invalidate(band=True))
+        self.delay.setKeyboardTracking(False)
+        self.delay.valueChanged.connect(lambda *_: self._invalidate())
+        for w in (self.require, self.form):
+            w.currentIndexChanged.connect(lambda *_: self._invalidate())
+        for w in (self.coupling, self.refine, self.sequential):
+            w.toggled.connect(lambda *_: self._invalidate())
         self.reset_button = QPushButton('Defaults')
         self.reset_button.setToolTip('All advanced settings back to their defaults')
         self.reset_button.clicked.connect(self.reset_advanced)
@@ -448,6 +458,23 @@ class MainWindow(QMainWindow):
         self._fill_table()
         self._refresh()
 
+    def _invalidate(self, band=False):
+        """A setting that needs a new search changed: the model at hand does not belong
+        to the settings any more, so it is taken away. A new band also gets a new data
+        check."""
+        if self.network is None or self.worker is not None:
+            return
+        had = self.model is not None
+        if not (had or band):
+            return
+        self.model = None
+        self.save_button.setEnabled(False)
+        self.clear_results()
+        self.look_at_data()
+        if had:
+            self.status.setText(self.status.text() + '\n' + 'Settings changed: the model was '
+                                'removed. Extract model makes it again.')
+
     def reset_band(self):
         """Fit band back to all frequencies of the data."""
         self.fmin.setValue(0)
@@ -492,9 +519,16 @@ class MainWindow(QMainWindow):
         self.worker.failed.connect(self._on_failed)
         self.worker.cancelled.connect(lambda: self._finish('Cancelled.'))
         self.run_button.setEnabled(False)
+        self._lock_settings(True)
         self.cancel_button.setEnabled(True)
         self.status.setText('Searching the catalog...')
         self.worker.start()
+
+    def _lock_settings(self, on):
+        """No changes of file and settings while a search runs."""
+        for w in (self.file_edit, self.fmin, self.fmax, self.full_range, self.quality,
+                  self.advanced):
+            w.setEnabled(not on)
 
     def cancel(self):
         if self.worker is not None:
@@ -510,6 +544,7 @@ class MainWindow(QMainWindow):
             self.worker.deleteLater()
             self.worker = None
         self.run_button.setEnabled(True)
+        self._lock_settings(False)
         self.cancel_button.setEnabled(False)
         self.bar.setValue(0)
         self.status.setText(text)

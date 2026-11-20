@@ -185,6 +185,20 @@ def test_gui_quality_and_advanced(app, tmp_path):
     win.quality.setCurrentIndex(win.quality.findData('small'))
     assert win.worker is None and win.model.options.target_db == -30
     assert win.model.n_elements() <= n
+    # a setting that needs a new search takes the model away
+    for change in (lambda: win.form.setCurrentIndex(win.form.findData('pi')),
+                   lambda: win.fmax.setValue(20), lambda: win.refine.setChecked(False),
+                   lambda: win.require.setCurrentIndex(win.require.findData('any'))):
+        win.run()
+        assert not win.advanced.isEnabled() and not win.fmax.isEnabled()
+        wait_for(app, lambda: win.model is not None and win.worker is None)
+        assert win.advanced.isEnabled() and win.table.rowCount() == 3
+        change()
+        assert win.model is None and win.table.rowCount() == 0
+        assert not win.save_button.isEnabled() and not win.copy_button.isEnabled()
+        assert win.netlist_view.toPlainText() == '' and not win.figure.axes
+        assert 'the model was removed' in win.status.text()
+        assert win.verdict.text() == 'suited'            # the data check again
     win.close()
 
 

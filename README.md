@@ -124,6 +124,11 @@ All other settings are behind "Advanced". A line next to the button names the on
 differ from their defaults, also while the panel is closed; "Defaults" sets them back. A
 limit changed by hand shows as model "Custom".
 
+A model is only shown while it belongs to the settings. A change of the band or of a
+setting that needs a new search (element signs, form, line, coupled coils, refinement,
+sequential) removes the model and its results; "Extract model" makes it again. While a
+search runs, the settings are locked.
+
 ![advanced settings](doc/gui_advanced.png)
 
 In the window, the Network column lists the other networks tried for each branch; choosing
