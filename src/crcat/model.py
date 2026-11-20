@@ -41,6 +41,7 @@ import math
 import numpy as np
 
 from . import catalog as _catalog
+from . import dc as _dc
 from .component import Component, format_value
 from .fit import DEFAULT_DPS, crfit, evaluate
 from .seed import Cancelled
@@ -52,6 +53,8 @@ __all__ = ['Options', 'Model', 'Branch', 'Candidate', 'Coupled', 'extract', 'shi
 REQUIRE = ('positive', 'positive-r', 'passive', 'any')
 PICK = ('simplest', 'best')
 FORM = ('auto', 'pi', 'tee')
+DC = ('data', 'no-ground', 'off')
+FLOAT_OHM = 1e9          # resistor to ground at a node without a DC path (SPICE netlists)
 # Model quality: one word for the error limits and the choice. 'standard' is the default of
 # Options; 'small' accepts more error for fewer elements; 'accurate' takes the lowest error.
 QUALITY = {
@@ -115,6 +118,15 @@ class Options:
         seconds, for data with a known feed line.
     line_z0: impedance of the line of a given delay in ohm (default: the reference
         impedance of the data).
+    dc: safeguard against leakage at DC. 'data' (default): a branch that is open at DC in
+        the data (capacitive towards low frequency, no conduction) gets only networks
+        without a DC path, so its loss is a resistor in series with a capacitor, never one
+        across it. 'no-ground': also no DC path from any port to ground, whatever the data
+        say. 'off': no such rule. See crcat.dc.
+    float_resistor: resistor in ohm from each internal node without a DC path to ground,
+        written into the netlist so that a simulator finds the operating point; it carries
+        no DC current and is not part of the model's response. 'auto' (default): 1 Gohm in
+        SPICE netlists, none in Spectre netlists (Spectre adds its own gmin); 0: none.
     full_search: synthesize every network instead of only those that can be chosen
         (slower, same result; fills the list of alternatives completely).
     dps: working precision of the fits, decimal digits.
@@ -134,6 +146,8 @@ class Options:
     sequential: bool = False
     delay: object = 'auto'
     line_z0: float = None
+    dc: str = 'data'
+    float_resistor: object = 'auto'
     full_search: bool = False
     dps: int = DEFAULT_DPS
 
@@ -144,6 +158,12 @@ class Options:
             raise ValueError(f'pick must be one of {PICK}')
         if self.form not in FORM:
             raise ValueError(f'form must be one of {FORM}')
+        if self.dc not in DC:
+            raise ValueError(f'dc must be one of {DC}')
+        if not (self.float_resistor == 'auto'
+                or (isinstance(self.float_resistor, (int, float))
+                    and not isinstance(self.float_resistor, bool) and self.float_resistor >= 0)):
+            raise ValueError("float_resistor must be 'auto' or a resistance in ohm (>= 0)")
         if self.tolerance < 1:
             raise ValueError('tolerance must be >= 1')
         if not 1 <= self.max_elements <= 5:
@@ -162,6 +182,12 @@ class Options:
     @property
     def target(self):
         return 10 ** (self.target_db / 20)
+
+    def float_ohm(self, fmt='spice'):
+        """The resistor at nodes without a DC path for a netlist format, 0 for none."""
+        if self.float_resistor == 'auto':
+            return FLOAT_OHM if fmt == 'spice' else 0.0
+        return float(self.float_resistor)
 
 
 def _db(x):
@@ -209,6 +235,13 @@ class Candidate:
         return self.trivial == 'open'
 
     @property
+    def conducts(self):
+        """True if the candidate has a DC path between its two ends."""
+        if self.is_trivial:
+            return self.trivial == 'short'
+        return _dc.conducts(self.component.network)
+
+    @property
     def label(self):
         if self.is_trivial:
             return self.trivial
@@ -247,6 +280,13 @@ class Branch:
         self.chosen = None
         self.limit = None                        # largest score accepted for the choice
         self.group = None
+        self.dc = _dc.dc_class(freq, y)          # 'open', 'path' or None: the data at DC
+
+    def dc_blocked(self, options):
+        """True if this branch must not get a DC path (Options.dc)."""
+        if options.dc == 'off':
+            return False
+        return self.dc == 'open' or (options.dc == 'no-ground' and self.node2 == '0')
 
     @property
     def name(self):
@@ -591,7 +631,37 @@ class Model:
         return len(self.elements())
 
     def warnings(self):
-        return [b.warning() for b in self.branches if b.warning()]
+        out = [b.warning() for b in self.branches if b.warning()]
+        for b in self.free_branches():
+            if b.dc == 'open' and b.chosen is not None and b.chosen.conducts:
+                out.append(f'{b.name}: the model has a DC path here, the data have none '
+                           f'(a leakage path at DC)')
+        return out
+
+    def _ports(self):
+        return [f'p{i + 1}' for i in range(self.nports)]
+
+    def dc_resistances(self):
+        """DC resistance in ohm between the ports and from each port to ground ('0'), the
+        other ports open: {(node, node): ohm}, inf without a path."""
+        return _dc.resistances(self.elements(), self._ports())
+
+    def floating_nodes(self):
+        """Internal nodes without a DC path to a port or to ground (one per island)."""
+        return _dc.floating_nodes(self.elements(), self._ports())
+
+    def dc_text(self):
+        """The DC paths of the model in words."""
+        found = [(a, b, r) for (a, b), r in self.dc_resistances().items() if math.isfinite(r)]
+        if not found:
+            return 'DC: no path' + (' between the ports or' if self.nports > 1 else '') + ' to ground'
+        text = 'DC paths: ' + ', '.join(f'{a} - {_node_name(b)} {format_value(r, "R")}'
+                                        for a, b, r in found[:8])
+        if len(found) > 8:
+            text += f' and {len(found) - 8} more'
+        if not any(b == '0' for _, b, _ in found):
+            text += '; none to ground'
+        return text
 
     def to_dict(self):
         """Plain data (JSON-ready) of the result."""
@@ -601,6 +671,9 @@ class Model:
         return {
             'source': self.source, 'ports': self.nports, 'z0': self.z0, 'form': self.form,
             'delay_s': self.delay, 'line_z0': self.line_z0 if self.delay else None,
+            'dc_ohm': [{'node1': a, 'node2': b, 'ohm': r if math.isfinite(r) else None}
+                       for (a, b), r in self.dc_resistances().items()],
+            'floating_nodes': self.floating_nodes(),
             'port_lines': [{'port': i + 1, 'delay_s': float(d), 'z0': float(z)}
                            for i, (d, z) in enumerate(zip(self.port_delay, self.port_z0))]
             if self.delay else None,
@@ -646,6 +719,7 @@ class Model:
             lines.append(self.lines_text())
         if self.line_note:
             lines.append(self.line_note)
+        lines.append(self.dc_text())
         lines.append(f'model ({self.form} form): {self.n_elements()} elements, S-parameter '
                      f'error {self.error_db():.1f} dB rms, {_db(self.max_error()):.1f} dB max')
         return '\n'.join(lines)
@@ -836,8 +910,10 @@ class _BranchSearch:
         yii = np.diagonal(data.y, axis1=1, axis2=2)          # port admittances of the data
         self.den_x = np.abs(yii)
         self.den_r = np.maximum(np.abs(yii.real), np.abs(yii) / LOSS_FLOOR_Q)
+        self.no_dc = branch.dc_blocked(opt)      # only networks without a DC path
         nets = [n for n in cat if n.can_synthesize and not n.fixed
-                and len(n.symVn) <= opt.max_elements]
+                and len(n.symVn) <= opt.max_elements
+                and not (self.no_dc and _dc.conducts(n))]
         self.sigs = {}
         for n in nets:
             self.sigs.setdefault(n.flag_sig, []).append(n)
@@ -851,7 +927,7 @@ class _BranchSearch:
                 self.sig_error[sig] = self.measure(evaluate(r.a, r.b, branch.freq, opt.dps))[0]
             tick()
         self.trivial = None
-        if branch.trivial in ('open', 'short'):
+        if branch.trivial == 'open' or (branch.trivial == 'short' and not self.no_dc):
             yb = (np.zeros_like if branch.trivial == 'open' else
                   lambda v: np.full_like(v, SHORT_SIEMENS))(branch.y)
             score, e, ex, el = self.measure(yb)
@@ -1399,7 +1475,7 @@ def describe(model):
              f'{o.reactance_percent:g} % (reactance), {o.loss_percent:g} % (loss), '
              f'else {o.tolerance:g} x the best, refine {"on" if o.refine else "off"}, '
              f'up to {o.max_elements} elements per branch, delay {_delay_text(o.delay)}, '
-             f'sequential {"on" if o.sequential else "off"}, '
+             f'sequential {"on" if o.sequential else "off"}, DC paths {o.dc}, '
              f'form {o.form}, coupled coils {"on" if o.coupling else "off"}']
     if model.reciprocity_error > 1e-6:
         lines.append(f'data are not reciprocal: RMS |S - S^T|/2 = '

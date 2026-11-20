@@ -23,6 +23,33 @@ No MATLAB is needed: the catalog was converted from CRCat's `.mat` files to JSON
 [The catalog](#the-catalog)), and the numerics use mpmath instead of MATLAB's variable
 precision arithmetic.
 
+Questions of RF designers who want to use an EM-simulated part in SPICE are answered in
+the [FAQ](doc/FAQ.md).
+
+## Contents
+
+- [Installation](#installation)
+- [From S-parameters to a netlist](#from-s-parameters-to-a-netlist)
+  - [Data check, verdict and suggestions](#data-check-verdict-and-suggestions)
+  - [Size against accuracy](#size-against-accuracy)
+  - [Line at the ports for a distributed part](#line-at-the-ports-for-a-distributed-part)
+  - [Testbench](#testbench)
+  - [DC paths](#dc-paths)
+  - [Plots](#plots)
+  - [Tee form](#tee-form)
+  - [Coupled coils](#coupled-coils)
+  - [Sequential fitting](#sequential-fitting)
+  - [Options](#options)
+- [Searching the catalog for one branch](#searching-the-catalog-for-one-branch)
+- [Schematics](#schematics)
+- [What is ported](#what-is-ported)
+  - [Differences from CRCat](#differences-from-crcat)
+- [The catalog](#the-catalog)
+  - [How it was converted](#how-it-was-converted)
+  - [Validation](#validation)
+- [Tests](#tests)
+- [License](#license)
+
 ## Installation
 
 ```
@@ -97,7 +124,7 @@ C_p1p2 p1p2_n3 p2 1.70939e-13
 
 Five elements per branch are a real limit for inductors: the series resistance of the 500 pH
 inductor above (snp2le example `ind_500pH_ihp-sg13cmos5l.s2p`, fitted to 50 GHz) becomes a
-constant 2.9 ohm with the default choice (7 elements, -41.9 dB), and rises from 2.8 to
+constant 2.9 ohm with the default choice (7 elements, -41.3 dB), and rises from 2.8 to
 4.9 ohm with `--pick best` (14 elements, -48.7 dB); neither has the 1.8 ohm at low
 frequency. The L, R, Q plot shows this.
 
@@ -116,7 +143,7 @@ The window asks for three things: the file, the fit band, and the model quality.
 | Most accurate | the network with the lowest error for each branch | `accurate` |
 
 With a model at hand, another quality takes effect at once, without a new search. For the
-500 pH inductor above: Small and Standard 7 elements (-41.9 dB), Most accurate 14 elements
+500 pH inductor above: Small and Standard 7 elements (-41.3 dB), Most accurate 14 elements
 (-48.7 dB); for the 170 fF MIM capacitor: 3 elements (-33.3 dB, C within 7 %), 5 elements
 (-49.7 dB) and 11 elements (C within 0.014 %).
 
@@ -168,11 +195,11 @@ data check: 2 port(s), 0.275 to 110 GHz, 400 points: line, self-resonance at 44.
   21 branches).
 
 After the fit comes a verdict in plain words (`crcat.advice.assess`): good (all limits
-kept), fair or poor, with the figures a designer asks for, here for the 500 pH inductor and
-for the line above over its full band:
+kept), fair or poor, with the figures a designer asks for, here for the 170 fF MIM
+capacitor and for the line above over its full band without lines at the ports:
 
 ```
-good: 0.01 to 50 GHz: 7 elements, S-parameters within -41.9 dB, L within 0.21 %, Q within 18 % (median)
+good: 1 to 100 GHz: 5 elements, S-parameters within -49.7 dB, C within 0.22 %, Q within 8.1 % (median)
 poor: 0.275 to 110 GHz: 11 elements, S-parameters within -4.3 dB, L within 52 %, Q within 34 % (median)
       try: Fit to 21.5 GHz; Allow negative L and C
 ```
@@ -283,6 +310,57 @@ the tests: the netlists of a pi model, of coupled coils and of a model with port
 simulated with ngspice 46, give the S-parameters of the model. The Spectre testbench has
 not been run in Spectre. "Copy netlist" in the window puts the netlist on the clipboard.
 
+### DC paths
+
+The data are fitted at high frequency only, and there a resistor across a capacitor and a
+resistor in series with it look almost the same. At DC they do not: the first one
+conducts. Without a rule, the 500 pH inductor got a 5.7 kohm resistor from each port to
+ground for its substrate loss, a leakage path that the part does not have.
+
+- **What the data say.** A branch whose admittance falls in proportion to the frequency
+  towards the low end, with a real part that falls faster, is capacitive there: open at
+  DC. A branch that tends to a constant conductance, or is inductive, has a DC path.
+- **The rule** (`--dc data`, the default). A branch that is open at DC in the data gets
+  only networks without a DC path through R and L. Its loss is then a resistor in series
+  with a capacitor, which is also the physical picture (oxide capacitance, then substrate
+  resistance). Refinement keeps the network, so it cannot bring a leak back, and the other
+  candidates offered for that branch follow the same rule.
+- **Stricter** (`--dc no-ground`): also never a DC path from a port to ground, whatever the
+  data say. `--dc off` switches the rule off; a leak is then reported as a warning.
+- **The result names the DC paths** of the finished netlist (capacitors open, inductors and
+  lines a short), with their resistance, each with the other ports open:
+
+```
+p1 - gnd   CR8 SerRC           -48.7 dB  X   8.04 %  loss   8.57 %  R=16.68Ohm C=13.31fF
+p2 - gnd   CR8 SerRC refined   -47.3 dB  X   4.54 %  loss   8.28 %  R=14.68Ohm C=13.99fF
+p1 - p2    CR23 IV-3 refined   -45.3 dB  X   3.74 %  loss   18.8 %  R=2.93Ohm L=528.7pH C=4.643fF
+DC paths: p1 - p2 2.93Ohm; none to ground
+model (pi form): 7 elements, S-parameter error -41.3 dB rms, -33.8 dB max
+```
+
+For this inductor the rule costs little: -41.3 dB instead of -41.9 dB, median Q error 26 %
+instead of 18 %. The 170 fF MIM capacitor, the 880 um line and a centre-tapped inductor
+had no leak and are unchanged. Data that start high (above a tenth of the top frequency of
+the fit band) do not show what happens at DC; `--dc data` then has nothing to go on for
+that branch, `--dc no-ground` still works.
+
+A model can have an internal node with no DC path to anywhere, for example the centre
+node of a tee whose three legs are capacitive. Simulators need a DC path at every node for
+the operating point: ngspice 46 reported "singular matrix" for such a netlist and only got
+through with its last fallback; Xyce reports the node; Spectre adds its own small
+conductance. The SPICE netlist therefore gets a 1 Gohm resistor from each such node to
+ground:
+
+```
+* no DC path at these nodes: resistor to ground for the operating point (it carries no DC current)
+Rdc_c c 0 1e+09
+```
+
+Nothing feeds that node at DC, so the resistor carries no DC current and is no leakage
+path: with it, ngspice finds the operating point without warnings and the DC current into
+the ports is zero (part of the tests). Ports are never given such a resistor.
+`--float-resistor` sets the value, 0 for none; by default Spectre netlists get none.
+
 ### Plots
 
 | View | Shows | File |
@@ -368,7 +446,8 @@ ports are fitted first, and the target of the branch to ground becomes Yii minus
 missed, and Yii of the model follows the data more closely.
 
 It is off by default, because what a series model missed is often not the admittance of
-any R, L, C network. Compared on the example files (same settings otherwise):
+any R, L, C network. Compared on the example files (same settings otherwise, measured
+with `--dc off`):
 
 | Data | default | sequential |
 |---|---|---|
@@ -404,6 +483,8 @@ Main options (`crcat-netlist --help` lists all):
 | `--check-only` | print the data check and stop |
 | `--delay auto`, `off`, or ps | line at each port, removed from the data before the fit, written as a `T` element (Spectre `tline`). auto (default): only for a distributed part, see above; a number: this delay at all ports |
 | `--line-z0` (ohm) | impedance of the line of a given `--delay` (default: the reference impedance) |
+| `--dc data`, `no-ground`, `off` | safeguard against leakage at DC, see [DC paths](#dc-paths). data (default): no DC path in a branch that is open at DC in the data; no-ground: also none from a port to ground |
+| `--float-resistor` (ohm) | resistor to ground at internal nodes without a DC path: auto (default: 1e9 in SPICE netlists, none in Spectre netlists), 0 for none |
 
 Limits:
 

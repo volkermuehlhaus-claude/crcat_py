@@ -167,6 +167,10 @@ def test_gui_quality_and_advanced(app, tmp_path):
     # hidden settings that differ from the defaults are named
     win.require.setCurrentIndex(win.require.findData('positive-r'))
     assert win.line_mode.currentData() == 'auto' and not win.delay.isEnabled()
+    assert win.dc.currentData() == 'data'
+    win.dc.setCurrentIndex(win.dc.findData('no-ground'))
+    assert win.options().dc == 'no-ground' and 'no DC path to ground' in win.advanced_note.text()
+    win.dc.setCurrentIndex(win.dc.findData('data'))
     win.line_mode.setCurrentIndex(win.line_mode.findData('off'))
     assert 'no line at the ports' in win.advanced_note.text() and win.options().delay == 'off'
     win.line_mode.setCurrentIndex(win.line_mode.findData('fixed'))

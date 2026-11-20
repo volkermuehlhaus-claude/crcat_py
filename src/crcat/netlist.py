@@ -58,6 +58,12 @@ def to_spice(model, name='crcat_model'):
                 lines.append(f'{ename} {n1} 0 {n2} 0 Z0={_line_z0(model, n1):.6g} TD={value:.6g}')
                 continue
             lines.append(f'{ename} {n1} {n2} {value:.6g}')
+    ohm = model.options.float_ohm('spice')
+    floating = model.floating_nodes() if ohm else []
+    if floating:
+        lines.append('* no DC path at these nodes: resistor to ground for the operating point '
+                     '(it carries no DC current)')
+        lines += [f'Rdc_{node} {node} 0 {ohm:.6g}' for node in floating]
     lines.append(f'.ENDS {name}')
     return '\n'.join(lines) + '\n'
 
@@ -79,6 +85,12 @@ def to_spectre(model, name='crcat_model'):
                 continue
             prim, par = _SPECTRE[kind]
             lines.append(f'    {ename} ({n1} {n2}) {prim} {par}={value:.6g}')
+    ohm = model.options.float_ohm('spectre')
+    floating = model.floating_nodes() if ohm else []
+    if floating:
+        lines.append('// no DC path at these nodes: resistor to ground for the operating point '
+                     '(it carries no DC current)')
+        lines += [f'    Rdc_{node} ({node} 0) resistor r={ohm:.6g}' for node in floating]
     lines.append(f'ends {name}')
     return '\n'.join(lines) + '\n'
 

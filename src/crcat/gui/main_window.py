@@ -168,6 +168,18 @@ class MainWindow(QMainWindow):
         form4.addRow('Line at each port', self.line_mode)
         form4.addRow('delay', self.delay)
         form4.addRow('impedance', self.line_z0)
+        self.dc = QComboBox()
+        for key, text in (('data', 'As in the data'), ('no-ground', 'None to ground'),
+                          ('off', 'Not checked')):
+            self.dc.addItem(text, key)
+        self.dc.setToolTip(
+            'Safeguard against leakage at DC.\n'
+            'As in the data: a branch that is open at DC in the data (capacitive towards '
+            'low frequency) gets no network with a DC path; its loss is then a resistor in '
+            'series with a capacitor.\n'
+            'None to ground: also never a DC path from a port to ground.\n'
+            'Not checked: any network.')
+        form4.addRow('DC paths', self.dc)
         form5 = QVBoxLayout()
         for w in (self.coupling, self.refine, self.sequential):
             form5.addWidget(w)
@@ -289,7 +301,7 @@ class MainWindow(QMainWindow):
         for w in (self.target, self.reactance_percent, self.loss_percent, self.max_elements,
                   self.delay, self.line_z0):
             w.valueChanged.connect(self._settings_changed)
-        for w in (self.pick, self.require, self.form, self.line_mode):
+        for w in (self.pick, self.require, self.form, self.line_mode, self.dc):
             w.currentIndexChanged.connect(self._settings_changed)
         for w in (self.coupling, self.refine, self.sequential):
             w.toggled.connect(self._settings_changed)
@@ -300,7 +312,7 @@ class MainWindow(QMainWindow):
         for w in (self.delay, self.line_z0):
             w.setKeyboardTracking(False)
             w.valueChanged.connect(lambda *_: self._invalidate())
-        for w in (self.require, self.form, self.line_mode):
+        for w in (self.require, self.form, self.line_mode, self.dc):
             w.currentIndexChanged.connect(lambda *_: self._invalidate())
         for w in (self.coupling, self.refine, self.sequential):
             w.toggled.connect(lambda *_: self._invalidate())
@@ -458,6 +470,8 @@ class MainWindow(QMainWindow):
             notes.append('no line at the ports')
         elif opt.delay != d.delay:
             notes.append(f'line {opt.delay * 1e12:.4g} ps at each port')
+        if opt.dc != d.dc:
+            notes.append({'no-ground': 'no DC path to ground', 'off': 'DC paths not checked'}[opt.dc])
         if opt.coupling != d.coupling:
             notes.append('no coupled coils')
         if opt.refine != d.refine:
@@ -475,6 +489,7 @@ class MainWindow(QMainWindow):
         self.line_mode.setCurrentIndex(self.line_mode.findData('auto'))
         self.delay.setValue(0)
         self.line_z0.setValue(0)
+        self.dc.setCurrentIndex(self.dc.findData(d.dc))
         self.coupling.setChecked(d.coupling)
         self.refine.setChecked(d.refine)
         self.sequential.setChecked(d.sequential)
@@ -536,7 +551,8 @@ class MainWindow(QMainWindow):
             max_elements=self.max_elements.value(),
             form=self.form.currentData(), coupling=self.coupling.isChecked(),
             sequential=self.sequential.isChecked(),
-            delay=self.line_delay(), line_z0=self.line_z0.value() or None)
+            delay=self.line_delay(), line_z0=self.line_z0.value() or None,
+            dc=self.dc.currentData())
 
     def run(self):
         if self.worker is not None:
@@ -642,6 +658,7 @@ class MainWindow(QMainWindow):
             text += ' ' + m.lines_text()[0].upper() + m.lines_text()[1:] + '.'
         if m.line_note:
             text += '\n' + m.line_note[0].upper() + m.line_note[1:] + '.'
+        text += '\n' + m.dc_text() + '.'
         if warnings:
             text += '\nWarning: ' + '\nWarning: '.join(warnings)
         self.assessment = a = advice.assess(m, self.network, self.data_check)

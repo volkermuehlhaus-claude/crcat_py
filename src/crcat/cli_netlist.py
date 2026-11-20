@@ -97,6 +97,14 @@ def main(argv=None):
     ap.add_argument('--sequential', action='store_true',
                     help='pi form: fit the branches to ground to the port admittance minus the '
                          'models (not the data) of the branches between ports')
+    ap.add_argument('--dc', choices=model.DC, default=d.dc,
+                    help='safeguard against leakage at DC. data (default): a branch that is '
+                         'open at DC in the data gets no network with a DC path; no-ground: '
+                         'also never a DC path from a port to ground; off: no such rule')
+    ap.add_argument('--float-resistor', default='auto',
+                    help='resistor in ohm to ground at internal nodes without a DC path, for '
+                         'the operating point of the simulator: auto (default: 1e9 in SPICE '
+                         'netlists, none in Spectre netlists), 0 for none, or a value')
     ap.add_argument('--no-coupling', action='store_true',
                     help='do not replace branches by coupled coils (K element)')
     ap.add_argument('--format', choices=netlist.FORMATS + ('both',), default='spice',
@@ -143,7 +151,8 @@ def main(argv=None):
             form=args.form, coupling=not args.no_coupling, full_search=args.full_search,
             sequential=args.sequential,
             delay=args.delay if args.delay in ('off', 'auto') else float(args.delay) * 1e-12,
-            line_z0=args.line_z0)
+            line_z0=args.line_z0, dc=args.dc,
+            float_resistor='auto' if args.float_resistor == 'auto' else float(args.float_resistor))
         m = model.extract(network, opt)
     except ValueError as ex:
         sys.exit(f'error: {ex}')
