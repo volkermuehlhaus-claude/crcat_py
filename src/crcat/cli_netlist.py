@@ -61,6 +61,9 @@ def main(argv=None):
                     help='error limits and choice in one word: small (fewer elements, more '
                          'error), standard (default), accurate (lowest error); --pick and '
                          'the three limit options override it')
+    ap.add_argument('--keep-low', action='store_true',
+                    help='without --fmin: also fit the DC region at the low end, where the '
+                         'S-parameters do not change with frequency (left out by default)')
     ap.add_argument('--require', choices=model.REQUIRE, default=d.require,
                     help='element values: positive = all positive (default); positive-r = '
                          'R positive, L and C may be negative; passive = any sign if the '
@@ -134,7 +137,8 @@ def main(argv=None):
     network = data.read(path)
     try:
         looked = check.check(network, None if args.fmin is None else args.fmin * 1e9,
-                             None if args.fmax is None else args.fmax * 1e9, args.target_db)
+                             None if args.fmax is None else args.fmax * 1e9, args.target_db,
+                             not args.keep_low)
     except ValueError as ex:
         sys.exit(f'error: {ex}')
     print('data check: ' + '\n            '.join(looked.lines()))
@@ -151,7 +155,7 @@ def main(argv=None):
             form=args.form, coupling=not args.no_coupling, full_search=args.full_search,
             sequential=args.sequential,
             delay=args.delay if args.delay in ('off', 'auto') else float(args.delay) * 1e-12,
-            line_z0=args.line_z0, dc=args.dc,
+            line_z0=args.line_z0, dc=args.dc, trim_low=not args.keep_low,
             float_resistor='auto' if args.float_resistor == 'auto' else float(args.float_resistor))
         m = model.extract(network, opt)
     except ValueError as ex:

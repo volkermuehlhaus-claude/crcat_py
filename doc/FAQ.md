@@ -131,6 +131,9 @@ prints the data check and stops.
 - **Start low.** The lowest frequency should be far below the band you care about, a
   factor of 10 or more. The tool reads the low-frequency inductance and capacitance from
   there, and also whether a branch conducts at DC. Data that start high leave these open.
+- **Starting very low does no harm.** A sweep from a few Hz has many points where the
+  S-parameters do not change at all. The tool leaves these out of the fit by itself and
+  says so ("left out: 47 points ..."), and uses them to see which paths conduct at DC.
 - **Enough points.** At least 12 frequencies in the fit band are required; 50 to 100 show
   the shape of Q and of a resonance well.
 - **Go high enough.** Simulate to the highest frequency the circuit will see, harmonics

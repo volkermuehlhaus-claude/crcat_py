@@ -11,13 +11,18 @@ import math
 
 import numpy as np
 
-__all__ = ['conducts', 'dc_class', 'resistances', 'floating_nodes', 'SHORT_KINDS']
+__all__ = ['conducts', 'dc_class', 'dc_class_at_dc', 'low_cut', 'resistances', 'floating_nodes',
+           'SHORT_KINDS']
 
 SHORT_KINDS = 'LT'           # elements that are a short at DC
 LOW_START = 0.1              # the data must start below this share of the top frequency
 CAP_SLOPE = 0.6              # |Y| must rise at least this fast with frequency (1 for a C)
 LOSS_SMALL = 0.02            # Re Y below this share of |Y| counts as none
 LOSS_SLOPE = 1.3             # else Re Y must rise at least this fast (2 for R in series with C)
+LOW_CUT = 0.1                # a change of S below this share of the error limit is no change
+LOW_CUT_MIN = 3              # fewer points than this are not a DC region
+MIN_POINTS = 12              # points a fit needs
+DC_SIEMENS = 1e-6            # conductance at DC above which a branch conducts (1 Mohm)
 
 
 def conducts(network):
@@ -59,6 +64,32 @@ def dc_class(freq, y):
     if re.min() <= 0:
         return 'open' if np.median(re / m) < 5 * LOSS_SMALL else 'path'
     return 'open' if np.polyfit(np.log(f), np.log(re), 1)[0] >= LOSS_SLOPE else 'path'
+
+
+def low_cut(freq, s, target):
+    """Number of points at the low end to leave out of a fit: the DC region.
+
+    Far below RF the S-parameters of a part do not change with frequency: they show its DC
+    resistances and nothing of its L and C, whose reactances are too small to be read.
+    Points there carry no information for the fit, and what is read from them as L or C is
+    not physical. The region ends at the first point whose S-parameters differ from those
+    of the lowest point by ``LOW_CUT`` times ``target`` (the S-parameter error limit,
+    linear). 0 if there is no such region, if nothing changes at all (a resistor), or if
+    too few points would be left."""
+    freq, s = np.asarray(freq, dtype=float), np.asarray(s)
+    change = np.abs(s - s[0]).reshape(freq.size, -1).max(axis=1)
+    above = np.flatnonzero(change >= LOW_CUT * target)
+    if above.size == 0:
+        return 0
+    k = int(above[0])
+    if k < LOW_CUT_MIN or freq.size - k < MIN_POINTS:
+        return 0
+    return k
+
+
+def dc_class_at_dc(y_dc):
+    """'path' or 'open' for a branch whose admittance in the DC region is ``y_dc``."""
+    return 'path' if np.real(y_dc) > DC_SIEMENS else 'open'
 
 
 class _Net:

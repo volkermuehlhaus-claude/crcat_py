@@ -188,6 +188,17 @@ data check: 2 port(s), 0.275 to 110 GHz, 400 points: line, self-resonance at 44.
   From 90 degrees on the check says "limited", names the frequency of 45 degrees, and
   names the line that the fit will try for the whole band, see
   [Line at the ports](#line-at-the-ports-for-a-distributed-part).
+- **DC region.** Far below RF the S-parameters of a part do not change with frequency:
+  they show its DC resistances, and the reactances of L and C are too small to be read.
+  What is read there as L or C is not physical, and every such point pulls the fit away
+  from the band that matters. The check finds this region at the low end (all points
+  whose S-parameters differ from those of the lowest point by less than a tenth of the
+  S-parameter error limit) and leaves it out of the fit. It is used for one thing: which
+  branches conduct at DC, see [DC paths](#dc-paths). Example, a 40 pH inductor simulated
+  from 9 Hz to 320 GHz with 47 of 137 points below 0.23 GHz: with all points the model
+  was at -29.0 dB with L within 28 %; with the region left out, fitted to 60 GHz, it is
+  at -55.8 dB with L within 3.4 %. A lower band limit of your own, or `--keep-low`,
+  switches this off.
 - **Form.** Branches whose data have a negative real part or a negative inductance cannot
   be made of positive elements. The check counts them for the pi and the tee form and
   names the form that fits, a magnetic coupling that coupled coils can take, or "not
@@ -319,7 +330,9 @@ ground for its substrate loss, a leakage path that the part does not have.
 
 - **What the data say.** A branch whose admittance falls in proportion to the frequency
   towards the low end, with a real part that falls faster, is capacitive there: open at
-  DC. A branch that tends to a constant conductance, or is inductive, has a DC path.
+  DC. A branch that tends to a constant conductance, or is inductive, has a DC path. If
+  the data have a DC region (see the data check), the conductance there decides instead:
+  above 1 uS (below 1 Mohm) the branch has a DC path.
 - **The rule** (`--dc data`, the default). A branch that is open at DC in the data gets
   only networks without a DC path through R and L. Its loss is then a resistor in series
   with a capacitor, which is also the physical picture (oxide capacitance, then substrate
@@ -466,6 +479,7 @@ Main options (`crcat-netlist --help` lists all):
 | Option | Meaning |
 |---|---|
 | `--fmin`, `--fmax` (GHz) | fit band; the plot still shows all data |
+| `--keep-low` | without `--fmin`: also fit the DC region at the low end, which is left out by default |
 | `--quality small`, `standard`, `accurate` | error limits and choice in one word, see the table above; `--pick` and the three limit options override it |
 | `--require positive` | all element values positive (default) |
 | `--require positive-r` | resistors positive, L and C of either sign. Still passive, since only resistors dissipate |

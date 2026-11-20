@@ -9,6 +9,7 @@ import math
 
 import numpy as np
 
+from . import dc as _dc
 from . import model as _model
 
 __all__ = ['check', 'DataCheck', 'BranchFacts']
@@ -49,13 +50,15 @@ class DataCheck:
     distributed 2-port: dict with z0 and delay, or None), ``port_lines`` (the same for any
     port count: one dict per port, or None), ``line_groups`` (multi-port: groups of ports
     joined by a conductor, seen as lines: dicts with ports, z0, delay, degrees, fit_db), ``branches`` ({form: [BranchFacts]}), ``couplings``
-    ([(ports, k)]), ``reciprocity`` and ``passive``."""
+    ([(ports, k)]), ``reciprocity`` and ``passive``. ``left_out``: (points, from Hz, to Hz)
+    of the DC region left out at the low end, or None."""
 
     def __init__(self):
         self.kind = self.verdict = self.form = None
         self.reasons, self.couplings, self.branches = [], [], {}
         self.fmax = self.srf = self.line = self.port_line = self.port_lines = None
         self.line_groups = []
+        self.left_out = None
         self.nports = self.points = 0
         self.band = (0.0, 0.0)
         self.reciprocity = 0.0
@@ -72,6 +75,8 @@ class DataCheck:
         out = [f'{self.nports} port(s), {self.band[0] / 1e9:.6g} to {self.band[1] / 1e9:.6g} GHz, '
                f'{self.points} points: {self.kind}'
                + (f', self-resonance at {self.srf / 1e9:.4g} GHz' if self.srf else '')]
+        if self.left_out:
+            out.append(left_out_text(self.left_out))
         if self.line:
             ln = self.line
             out.append(f'as a line: {ln["z0"]:.3g} ohm, {ln["delay"] * 1e12:.3g} ps, '
@@ -83,6 +88,13 @@ class DataCheck:
                        + f'{arms}; {g["degrees"]:.0f} deg at the top of the band')
         out.append(f'{self.verdict}: ' + '; '.join(self.reasons))
         return out
+
+
+def left_out_text(left_out):
+    """The DC region left out, in words."""
+    k, f0, f1 = left_out
+    return (f'left out: {k} points from {f0 / 1e9:.3g} GHz up to {f1 / 1e9:.3g} GHz, where the '
+            f'S-parameters do not change with frequency (they show the DC values only)')
 
 
 def _resonances(y):
@@ -101,8 +113,9 @@ def _facts(branches, s_error, target):
     return out
 
 
-def check(network, fmin=None, fmax=None, target_db=-40.0):
-    """Look at a scikit-rf Network (or Touchstone file name) in the band fmin..fmax (Hz)."""
+def check(network, fmin=None, fmax=None, target_db=-40.0, trim_low=True):
+    """Look at a scikit-rf Network (or Touchstone file name) in the band fmin..fmax (Hz).
+    ``trim_low``: without fmin, leave out the DC region at the low end (crcat.dc.low_cut)."""
     if not hasattr(network, 's'):
         from . import data
         network = data.read(network)
@@ -114,14 +127,21 @@ def check(network, fmin=None, fmax=None, target_db=-40.0):
         keep &= f <= fmax
     if keep.sum() < 12:
         raise ValueError(f'only {int(keep.sum())} frequencies in the band, 12 needed')
+    target = 10 ** (target_db / 20)
+    left_out = None
+    if trim_low and fmin is None:
+        k = _dc.low_cut(f[keep], network.s[keep], target)
+        if k:
+            left_out = (k, float(f[keep][0]), float(f[keep][k]))
+            keep[np.flatnonzero(keep)[:k]] = False
     f = f[keep]
     w = 2 * np.pi * f
     n = network.nports
     z0 = float(np.real(network.z0[0, 0])) or 50.0
     s = network.s[keep]
-    target = 10 ** (target_db / 20)
     eye = np.eye(n)
     c = DataCheck()
+    c.left_out = left_out
     c.nports, c.points, c.band = n, f.size, (float(f[0]), float(f[-1]))
     c.reciprocity = _model._rms(s - np.transpose(s, (0, 2, 1))) / 2
     c.passive = bool(np.max(np.linalg.svd(s, compute_uv=False)) <= 1 + 1e-3)

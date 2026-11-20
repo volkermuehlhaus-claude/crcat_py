@@ -87,6 +87,10 @@ class Options:
     """Settings of :func:`extract`.
 
     fmin, fmax: fit band in Hz (default: all data; a 0 Hz point is never used).
+    trim_low: without fmin, leave out the DC region at the low end: the points whose
+        S-parameters do not differ from those of the lowest point (by a tenth of the
+        S-parameter error limit). They show the DC resistances and nothing of L and C;
+        they are used to tell which branches conduct at DC (see crcat.dc.low_cut).
     require: 'positive' (all element values > 0), 'positive-r' (resistors > 0, L and C of
         either sign: still passive, since only resistors dissipate), 'passive' (Re Y >= 0,
         any signs) or 'any' (any real element values).
@@ -133,6 +137,7 @@ class Options:
     """
     fmin: float = None
     fmax: float = None
+    trim_low: bool = True
     require: str = 'positive'
     pick: str = 'simplest'
     target_db: float = -40.0
@@ -436,6 +441,7 @@ class Model:
         self.port_delay = np.zeros(nports)       # line at each port: delay in seconds
         self.port_z0 = np.full(nports, float(z0))   # and impedance
         self.line_note = ''                      # why an automatic line is (not) there
+        self.left_out = None                     # DC region left out: (points, Hz, Hz)
         self.freq, self.s_data = freq, s_data    # fit band
         self.options = options
         self.source = source
@@ -674,6 +680,8 @@ class Model:
             'dc_ohm': [{'node1': a, 'node2': b, 'ohm': r if math.isfinite(r) else None}
                        for (a, b), r in self.dc_resistances().items()],
             'floating_nodes': self.floating_nodes(),
+            'left_out': None if self.left_out is None else
+            {'points': self.left_out[0], 'from_hz': self.left_out[1], 'to_hz': self.left_out[2]},
             'port_lines': [{'port': i + 1, 'delay_s': float(d), 'z0': float(z)}
                            for i, (d, z) in enumerate(zip(self.port_delay, self.port_z0))]
             if self.delay else None,
@@ -719,6 +727,9 @@ class Model:
             lines.append(self.lines_text())
         if self.line_note:
             lines.append(self.line_note)
+        if self.left_out:
+            from .check import left_out_text
+            lines.append(left_out_text(self.left_out))
         lines.append(self.dc_text())
         lines.append(f'model ({self.form} form): {self.n_elements()} elements, S-parameter '
                      f'error {self.error_db():.1f} dB rms, {_db(self.max_error()):.1f} dB max')
@@ -1126,6 +1137,7 @@ class _Data:
         self.cat, self.opt, self.tick = cat, opt, tick
         self.nports = y_sym.shape[-1]
         self.at = lambda fraction: None          # progress: where the work stands (0..1)
+        self.y_dc = None                         # Y-matrix in the DC region of the data
 
     def y_diff(self, y):
         return _y2s(y, self.z0) - self.s_ref
@@ -1141,6 +1153,10 @@ def _extract_pi(d):
         node2 = f'p{ports[1]}' if len(ports) == 2 else '0'
         branches.append(Branch(f'p{ports[0]}', node2, 'p' + 'p'.join(str(p) for p in ports),
                                d.f, yb[ports], 'open', ports))
+    if d.y_dc is not None:                       # the data show DC directly
+        at_dc = branch_admittances(d.y_dc[None])
+        for b in branches:
+            b.dc = _dc.dc_class_at_dc(at_dc[b.ports][0])
     # The branches between ports first. With Options.sequential the branches to ground
     # then make up for what those models missed: the target of the branch at port i is
     # Yii minus the *models* of the branches at that port (not minus their data), and its
@@ -1183,6 +1199,16 @@ def _extract_tee(d):
     branches = [Branch('p1', 'c', 'p1c', d.f, legs[0], 'short'),
                 Branch('p2', 'c', 'p2c', d.f, legs[1], 'short'),
                 Branch('c', '0', 'c', d.f, legs[2], 'open')]
+    if d.y_dc is not None and np.abs(d.y_dc).max() > _dc.DC_SIEMENS:
+        try:
+            with np.errstate(all='ignore'):
+                zd = np.linalg.inv(d.y_dc)
+                at_dc = [1 / (zd[0, 0] - zd[0, 1]), 1 / (zd[1, 1] - zd[0, 1]), 1 / zd[0, 1]]
+            for b, v in zip(branches, at_dc):
+                if np.isfinite(v):
+                    b.dc = _dc.dc_class_at_dc(v)
+        except np.linalg.LinAlgError:
+            pass
     for k, b in enumerate(branches):
         d.at(0.9 + 0.03 * k)
 
@@ -1375,6 +1401,17 @@ def extract(network, options=None, catalog=None, progress=None, cancel=None):
     s_data = network.s[keep]
     n = network.nports
     eye = np.eye(n)
+    left_out, y_dc = None, None
+    if opt.trim_low and opt.fmin is None:
+        k = _dc.low_cut(f, s_data, opt.target)
+        if k:
+            left_out = (k, float(f[0]), float(f[k]))
+            try:                                 # the lowest point: the part at DC
+                y_dc = np.linalg.solve(z0 * (eye + s_data[0]), eye - s_data[0])
+                y_dc = (y_dc + y_dc.T) / 2
+            except np.linalg.LinAlgError:
+                y_dc = None
+            f, s_data = f[k:], s_data[k:]
     done = [0.0]                                 # progress: fraction of the work done
 
     def tick(text=''):
@@ -1400,6 +1437,7 @@ def extract(network, options=None, catalog=None, progress=None, cancel=None):
         y_sym = (y + np.transpose(y, (0, 2, 1))) / 2
         d = _Data(f, y_sym, s_core, z0, cat, opt, tick)
         d.at = at
+        d.y_dc = y_dc
         model = None
         if opt.form in ('auto', 'pi'):
             model = _extract_pi(d)
@@ -1417,6 +1455,7 @@ def extract(network, options=None, catalog=None, progress=None, cancel=None):
         model.set_lines(delay, line_z0)
         model.s_data = s_data                    # the data as given, with the lines
         model.reciprocity_error = _rms(d.s_ref - s_core)
+        model.left_out = left_out
         return model
 
     if opt.delay == 'off':
@@ -1435,7 +1474,7 @@ def _auto_line(network, opt, run, done):
     2-port, and only if the model with them is within the limits or the better one."""
     from . import check as _check                # check imports this module
     try:
-        lines = _check.check(network, opt.fmin, opt.fmax, opt.target_db).port_lines
+        lines = _check.check(network, opt.fmin, opt.fmax, opt.target_db, opt.trim_low).port_lines
     except ValueError:
         lines = None
     if lines is None:

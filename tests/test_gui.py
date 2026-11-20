@@ -168,6 +168,10 @@ def test_gui_quality_and_advanced(app, tmp_path):
     win.require.setCurrentIndex(win.require.findData('positive-r'))
     assert win.line_mode.currentData() == 'auto' and not win.delay.isEnabled()
     assert win.dc.currentData() == 'data'
+    assert win.trim_low.isChecked() and win.options().trim_low
+    win.trim_low.setChecked(False)
+    assert not win.options().trim_low and 'DC region kept' in win.advanced_note.text()
+    win.trim_low.setChecked(True)
     win.dc.setCurrentIndex(win.dc.findData('no-ground'))
     assert win.options().dc == 'no-ground' and 'no DC path to ground' in win.advanced_note.text()
     win.dc.setCurrentIndex(win.dc.findData('data'))

@@ -119,6 +119,12 @@ class MainWindow(QMainWindow):
             'Pi form: fit the branches between ports first, then each branch to ground to the '
             'port admittance minus those models (not minus their data), so it makes up for '
             'what they missed')
+        self.trim_low = QCheckBox('Skip the DC region')
+        self.trim_low.setChecked(defaults.trim_low)
+        self.trim_low.setToolTip(
+            'Leave out the low end of the data where the S-parameters do not change with '
+            'frequency. There they show the DC resistances only, nothing of L and C. Used '
+            'only while the lower band limit is "data".')
         self.format = QComboBox()
         for key in netlist.FORMATS:
             self.format.addItem(key, key)
@@ -181,7 +187,7 @@ class MainWindow(QMainWindow):
             'Not checked: any network.')
         form4.addRow('DC paths', self.dc)
         form5 = QVBoxLayout()
-        for w in (self.coupling, self.refine, self.sequential):
+        for w in (self.coupling, self.refine, self.sequential, self.trim_low):
             form5.addWidget(w)
         form5.addStretch(1)
         self.advanced = QGroupBox()
@@ -303,7 +309,7 @@ class MainWindow(QMainWindow):
             w.valueChanged.connect(self._settings_changed)
         for w in (self.pick, self.require, self.form, self.line_mode, self.dc):
             w.currentIndexChanged.connect(self._settings_changed)
-        for w in (self.coupling, self.refine, self.sequential):
+        for w in (self.coupling, self.refine, self.sequential, self.trim_low):
             w.toggled.connect(self._settings_changed)
         # settings that need a new search: a model made with other values is not shown
         for w in (self.fmin, self.fmax):
@@ -316,6 +322,7 @@ class MainWindow(QMainWindow):
             w.currentIndexChanged.connect(lambda *_: self._invalidate())
         for w in (self.coupling, self.refine, self.sequential):
             w.toggled.connect(lambda *_: self._invalidate())
+        self.trim_low.toggled.connect(lambda *_: self._invalidate(band=True))
         self.reset_button = QPushButton('Defaults')
         self.reset_button.setToolTip('All advanced settings back to their defaults')
         self.reset_button.clicked.connect(self.reset_advanced)
@@ -366,7 +373,8 @@ class MainWindow(QMainWindow):
         """The data check for the band in the fields: verdict and a band suggestion."""
         try:
             c = check.check(self.network, self.fmin.value() * 1e9 or None,
-                            self.fmax.value() * 1e9 or None, self.target.value())
+                            self.fmax.value() * 1e9 or None, self.target.value(),
+                            self.trim_low.isChecked())
         except ValueError as ex:
             self.data_check = None
             self.status.setText(str(ex))
@@ -479,6 +487,8 @@ class MainWindow(QMainWindow):
             notes.append('values not refined')
         if opt.sequential != d.sequential:
             notes.append('sequential')
+        if opt.trim_low != d.trim_low:
+            notes.append('DC region kept')
         self.advanced_note.setText('In use: ' + ', '.join(notes) if notes else '')
 
     def reset_advanced(self):
@@ -494,6 +504,7 @@ class MainWindow(QMainWindow):
         self.coupling.setChecked(d.coupling)
         self.refine.setChecked(d.refine)
         self.sequential.setChecked(d.sequential)
+        self.trim_low.setChecked(d.trim_low)
         self.quality.setCurrentIndex(self.quality.findData(model.quality_of(d)))
 
     def _reselect(self, *_):
@@ -551,7 +562,7 @@ class MainWindow(QMainWindow):
             loss_percent=self.loss_percent.value(), refine=self.refine.isChecked(),
             max_elements=self.max_elements.value(),
             form=self.form.currentData(), coupling=self.coupling.isChecked(),
-            sequential=self.sequential.isChecked(),
+            sequential=self.sequential.isChecked(), trim_low=self.trim_low.isChecked(),
             delay=self.line_delay(), line_z0=self.line_z0.value() or None,
             dc=self.dc.currentData())
 

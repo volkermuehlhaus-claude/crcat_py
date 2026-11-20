@@ -146,3 +146,61 @@ def test_cli_dc_options(tmp_path, capsys):
     out = capsys.readouterr().out
     assert 'dc=no-ground' in out and 'DC paths no-ground' in out and 'none to ground' in out
     assert os.path.exists(tmp_path / 'dut_crcat.sp')
+
+
+# --- the DC region at the low end of the data -------------------------------------------------
+
+def low_start_network():
+    """An inductor simulated from 10 Hz: a third of the points are far below RF."""
+    f = np.concatenate([np.logspace(1, 8, 30), np.linspace(0.5e9, 40e9, 60)])
+    return make_network(2, {(1,): ('C', [20e-15]), (2,): ('SerRC', [150.0, 35e-15]),
+                            (1, 2): ('SerRL', [2.0, 0.4e-9])}, f=f), f
+
+
+def test_low_cut():
+    net, f = low_start_network()
+    k = dc.low_cut(f, net.s, 0.01)
+    # 0.4 nH against 2 ohm in series: the S-parameters move by a tenth of the limit (1e-3)
+    # where w L is about 0.1 ohm, some tens of MHz
+    assert 20 <= k <= 30 and 1e7 < f[k] <= 1e8
+    assert dc.low_cut(f, net.s, 1e-4) < k                      # a stricter limit keeps more
+    assert dc.low_cut(F, make_network(2, PARTS, f=F).s, 0.01) == 0     # ordinary data: nothing
+    flat = make_network(2, {(1, 2): ('R', [50.0]), (1,): ('R', [200.0])}, f=f)
+    assert dc.low_cut(f, flat.s, 0.01) == 0                    # a resistor: nothing changes at all
+    assert dc.low_cut(f[:32], net.s[:32], 0.01) == 0           # too few points would be left
+    assert dc.dc_class_at_dc(0.5) == 'path' and dc.dc_class_at_dc(1e-9) == 'open'
+    assert dc.dc_class_at_dc(-1e-5) == 'open'                  # noise of either sign
+
+
+def test_dc_region_is_left_out_of_the_fit():
+    from crcat import check
+    net, f = low_start_network()
+    k = dc.low_cut(f, net.s, 0.01)
+    c = check.check(net)
+    assert c.left_out == (k, f[0], f[k]) and c.band[0] == f[k] and c.kind == 'inductor'
+    assert any(ln.startswith(f'left out: {k} points') for ln in c.lines())
+    m = model.extract(net, model.Options(pick='best'))
+    assert m.left_out == c.left_out and m.freq[0] == f[k] and m.freq.size == f.size - k
+    assert m.error_db() < -100 and 'left out:' in m.summary()
+    assert m.to_dict()['left_out']['points'] == k
+    # the DC region tells which branches conduct
+    assert {b.name: b.dc for b in m.branches} == {'p1 - gnd': 'open', 'p2 - gnd': 'open',
+                                                 'p1 - p2': 'path'}
+    assert m.dc_text() == 'DC paths: p1 - p2 2' + m.dc_text()[19:] and 'none to ground' in m.dc_text()
+    # with the low end kept, or with a lower limit of one's own, nothing is left out
+    kept = model.extract(net, model.Options(pick='best', trim_low=False))
+    assert kept.left_out is None and kept.freq.size == f.size
+    assert check.check(net, trim_low=False).left_out is None
+    own = model.extract(net, model.Options(pick='best', fmin=1e3))
+    assert own.left_out is None and own.freq[0] >= 1e3
+    assert check.check(net, fmin=1e3).left_out is None
+
+
+def test_cli_keep_low(tmp_path, capsys):
+    net, _ = low_start_network()
+    src = tmp_path / 'dut.s2p'
+    net.write_touchstone(str(src.with_suffix('')))
+    main([str(src), '--check-only'])
+    assert 'left out:' in capsys.readouterr().out
+    main([str(src), '--check-only', '--keep-low'])
+    assert 'left out:' not in capsys.readouterr().out
